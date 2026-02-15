@@ -96,6 +96,7 @@ impl EmbeddingBackend {
 
         #[cfg(not(feature = "model2vec"))]
         {
+            let _ = text;
             Err(crate::Error::Embedding(
                 "model2vec feature not enabled".to_string(),
             ))

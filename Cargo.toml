@@ -1,6 +1,6 @@
 [package]
 name = "mnemoria"
-version = "0.1.3"
+version = "0.2.0"
 edition = "2024"
 description = "Persistent, git-friendly memory storage for AI agents with hybrid semantic + full-text search"
 license = "MIT"

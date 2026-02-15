@@ -52,7 +52,7 @@ enum Commands {
         #[arg(short, long)]
         until: Option<i64>,
 
-        #[arg(short, long)]
+        #[arg(short, long, default_value_t = true)]
         reverse: bool,
     },
     RebuildIndex {},
@@ -138,7 +138,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if valid {
                 println!("Memory verification passed - checksums are valid");
             } else {
-                println!("Memory verification FAILED - corruption detected!");
+                eprintln!("Memory verification FAILED - corruption detected!");
+                std::process::exit(1);
             }
         }
         Commands::Timeline {

@@ -35,35 +35,26 @@ impl FileLock {
 
         // Create the lock file if it doesn't exist. The file is never
         // deleted; its contents are irrelevant.
-        OpenOptions::new()
+        let _file = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(false)
-            .open(&lock_path)
-            .map_err(|e| std::io::Error::other(format!("Failed to create lock file: {e}")))?;
+            .open(&lock_path)?;
 
         Ok(Self { lock_path })
     }
 
     /// Acquire an exclusive (writer) lock. Blocks until available.
     pub fn lock_exclusive(&self) -> Result<FileLockGuard, crate::Error> {
-        let file = File::open(&self.lock_path)
-            .map_err(|e| std::io::Error::other(format!("Failed to open lock file: {e}")))?;
-
-        file.lock_exclusive()
-            .map_err(|e| std::io::Error::other(format!("Failed to acquire exclusive lock: {e}")))?;
-
+        let file = File::open(&self.lock_path)?;
+        file.lock_exclusive()?;
         Ok(FileLockGuard { _file: file })
     }
 
     /// Acquire a shared (reader) lock. Blocks only while an exclusive lock is held.
     pub fn lock_shared(&self) -> Result<FileLockGuard, crate::Error> {
-        let file = File::open(&self.lock_path)
-            .map_err(|e| std::io::Error::other(format!("Failed to open lock file: {e}")))?;
-
-        file.lock_shared()
-            .map_err(|e| std::io::Error::other(format!("Failed to acquire shared lock: {e}")))?;
-
+        let file = File::open(&self.lock_path)?;
+        file.lock_shared()?;
         Ok(FileLockGuard { _file: file })
     }
 }

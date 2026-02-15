@@ -104,17 +104,28 @@ fn cleanup_stale_index_dirs(base_path: &Path) {
 /// Check whether a process with the given PID is still running.
 #[cfg(unix)]
 fn is_process_alive(pid: u32) -> bool {
+    // Reject PIDs that would overflow i32 (would be interpreted as a
+    // process group on negative values).
+    let pid_i32 = match i32::try_from(pid) {
+        Ok(p) if p > 0 => p,
+        _ => return false,
+    };
+
     // kill(pid, 0) checks existence without sending a signal.
-    // Returns 0 if the process exists (and we have permission to signal it),
-    // or -1 with ESRCH if it doesn't exist.
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+    // Returns 0 if the process exists and we have permission to signal it.
+    // Returns -1 with ESRCH if no such process exists.
+    // Returns -1 with EPERM if the process exists but we lack permission.
+    unsafe {
+        if libc::kill(pid_i32, 0) == 0 {
+            return true;
+        }
+        // EPERM means the process exists but we can't signal it — still alive.
+        *libc::__errno_location() == libc::EPERM
+    }
 }
 
 #[cfg(windows)]
 fn is_process_alive(pid: u32) -> bool {
-    use std::os::windows::io::FromRawHandle;
-    use std::ptr;
-
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
     const STILL_ACTIVE: u32 = 259;
 
@@ -222,11 +233,26 @@ impl ManifestFingerprint {
 ///
 /// The per-process Tantivy index directory (stored in the OS temp dir) is
 /// automatically removed when the `Mnemoria` instance is dropped.
+/// ## Lock ordering
+///
+/// When acquiring multiple mutexes, always follow this order to prevent
+/// deadlocks:
+///
+/// 1. `writer`
+/// 2. `manifest`
+/// 3. `index`
+/// 4. `pending_index_writes`
+/// 5. `cache`
+/// 6. `cached_fingerprint`
+///
+/// Not every method needs all locks. The rule is: if you hold lock N, you
+/// must not attempt to acquire lock M where M < N.
 pub struct Mnemoria {
     base_path: PathBuf,
     config: Config,
-    manifest: Mutex<Manifest>,
+    // See lock ordering above. Fields are listed in acquisition order.
     writer: Mutex<Option<LogWriter>>,
+    manifest: Mutex<Manifest>,
     index: Mutex<IndexManager>,
     /// Per-process index directory (ephemeral, cleaned up on drop).
     index_path: PathBuf,
@@ -256,7 +282,7 @@ impl Mnemoria {
     fn now_millis() -> i64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as i64
     }
 
@@ -438,6 +464,20 @@ impl Mnemoria {
         let log_path = Manifest::log_path(&self.base_path);
         let entries = log_reader::read_all(&log_path)?;
 
+        // Each lock is acquired and released in its own scope (no two held
+        // simultaneously), but we follow the documented acquisition order
+        // for readability: writer -> manifest -> index -> pending -> cache
+        // -> fingerprint.
+
+        // Reopen the log writer (file position may have changed)
+        {
+            let mut writer = lock_mutex(&self.writer)?;
+            *writer = Some(LogWriter::with_durability(
+                &log_path,
+                self.config.durability,
+            )?);
+        }
+
         // Update manifest
         {
             let mut manifest = lock_mutex(&self.manifest)?;
@@ -450,15 +490,6 @@ impl Mnemoria {
             index.rebuild_from_entries(&entries)?;
         }
         self.reset_pending_index_writes()?;
-
-        // Reopen the log writer (file position may have changed)
-        {
-            let mut writer = lock_mutex(&self.writer)?;
-            *writer = Some(LogWriter::with_durability(
-                &log_path,
-                self.config.durability,
-            )?);
-        }
 
         // Update cache and fingerprint
         {
@@ -476,8 +507,8 @@ impl Mnemoria {
     /// Create a new memory store at `path` with default configuration.
     ///
     /// The directory is created if it does not exist. An empty `log.bin` and
-    /// `manifest.json` are written. If a store already exists at `path`, its
-    /// manifest is overwritten (the log is preserved).
+    /// `manifest.json` are written. If a store already exists at `path`, it
+    /// is fully reset: the log is truncated and the manifest is overwritten.
     ///
     /// This is equivalent to calling
     /// [`create_with_config`](Self::create_with_config) with
@@ -507,10 +538,18 @@ impl Mnemoria {
         let manifest = Manifest::default();
         manifest.save(path)?;
 
-        let fingerprint = ManifestFingerprint::from_manifest(&manifest);
-
+        // Truncate any existing log file so the empty manifest and empty log
+        // are consistent. Without this, a pre-existing log would contain
+        // entries that the fresh manifest doesn't know about, breaking the
+        // checksum chain on the next write.
         let log_path = Manifest::log_path(path);
+        if log_path.exists() {
+            std::fs::write(&log_path, b"")?;
+        }
+
         let writer = LogWriter::with_durability(&log_path, config.durability)?;
+
+        let fingerprint = ManifestFingerprint::from_manifest(&manifest);
 
         let index_path = per_process_index_path(path);
         let index = IndexManager::new(&index_path)?;
@@ -603,7 +642,7 @@ impl Mnemoria {
     /// search. The returned ID is a UUID v4 string that can be used with
     /// [`get`](Self::get) to retrieve the entry later.
     ///
-    /// If [`Config::max_entries`] is set and the store exceeds the limit
+    /// If [`Config::max_entries`] is set and the store reaches the limit
     /// after this write, the oldest entries are automatically rotated out.
     ///
     /// # Arguments
@@ -643,17 +682,22 @@ impl Mnemoria {
 
         let entry_to_write = if self.embeddings.is_available() {
             let mut entry_with_embedding = entry.clone();
-            if let Ok(embedding) = self.embeddings.embed(content) {
-                entry_with_embedding.embedding = Some(embedding);
-                entry_with_embedding.checksum = MemoryEntry::compute_checksum(
-                    &entry_with_embedding.id,
-                    entry_with_embedding.entry_type,
-                    &entry_with_embedding.summary,
-                    &entry_with_embedding.content,
-                    entry_with_embedding.timestamp,
-                    entry_with_embedding.prev_checksum,
-                    entry_with_embedding.embedding.as_deref(),
-                );
+            match self.embeddings.embed(content) {
+                Ok(embedding) => {
+                    entry_with_embedding.embedding = Some(embedding);
+                    entry_with_embedding.checksum = MemoryEntry::compute_checksum(
+                        &entry_with_embedding.id,
+                        entry_with_embedding.entry_type,
+                        &entry_with_embedding.summary,
+                        &entry_with_embedding.content,
+                        entry_with_embedding.timestamp,
+                        entry_with_embedding.prev_checksum,
+                        entry_with_embedding.embedding.as_deref(),
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to compute embedding for entry {}: {}", entry_id, e);
+                }
             }
             entry_with_embedding
         } else {
@@ -664,9 +708,10 @@ impl Mnemoria {
 
         {
             let mut writer = lock_mutex(&self.writer)?;
-            if let Some(ref mut w) = *writer {
-                w.append(&entry_to_write)?;
-            }
+            let w = writer.as_mut().ok_or_else(|| {
+                crate::Error::Io(std::io::Error::other("Log writer not available"))
+            })?;
+            w.append(&entry_to_write)?;
         }
 
         {
@@ -723,8 +768,10 @@ impl Mnemoria {
     async fn rotate_old_entries(&self) -> Result<(), crate::Error> {
         let max_entries = self.config.max_entries.unwrap_or(u64::MAX);
 
-        let log_path = Manifest::log_path(&self.base_path);
-        let entries = log_reader::read_all(&log_path)?;
+        let entries = {
+            let cache = lock_mutex(&self.cache)?;
+            cache.ordered.clone()
+        };
 
         if entries.len() as u64 <= max_entries {
             return Ok(());
@@ -950,7 +997,6 @@ impl Mnemoria {
         let _guard = self.file_lock.lock_exclusive()?;
         self.refresh_if_stale()?;
 
-        self.commit_pending_index_writes(true)?;
         let entries = {
             let cache = lock_mutex(&self.cache)?;
             cache.ordered.clone()
@@ -1010,28 +1056,48 @@ impl Mnemoria {
             })
             .collect();
 
+        // Re-link the checksum chain so that each entry's prev_checksum
+        // points to the actual preceding entry (entries may have been
+        // removed by the filter above, breaking the original chain).
+        let mut new_prev_checksum = 0u32;
+        let mut relinked_entries = Vec::with_capacity(valid_entries.len());
+        for entry in &valid_entries {
+            let mut relinked = entry.clone();
+            relinked.prev_checksum = new_prev_checksum;
+            relinked.checksum = MemoryEntry::compute_checksum(
+                &relinked.id,
+                relinked.entry_type,
+                &relinked.summary,
+                &relinked.content,
+                relinked.timestamp,
+                relinked.prev_checksum,
+                relinked.embedding.as_deref(),
+            );
+            new_prev_checksum = relinked.checksum;
+            relinked_entries.push(relinked);
+        }
+
         let mut index = lock_mutex(&self.index)?;
-        index.clear()?;
 
-        self.rewrite_log_atomically(&valid_entries)?;
+        self.rewrite_log_atomically(&relinked_entries)?;
 
-        index.rebuild_from_entries(&valid_entries)?;
+        index.rebuild_from_entries(&relinked_entries)?;
         drop(index);
         self.reset_pending_index_writes()?;
 
         {
             let mut manifest = lock_mutex(&self.manifest)?;
-            manifest.entry_count = valid_entries.len() as u64;
-            manifest.last_checksum = valid_entries.last().map_or(0, |e| e.checksum);
-            manifest.oldest_timestamp = valid_entries.first().map(|e| e.timestamp);
-            manifest.newest_timestamp = valid_entries.last().map(|e| e.timestamp);
+            manifest.entry_count = relinked_entries.len() as u64;
+            manifest.last_checksum = relinked_entries.last().map_or(0, |e| e.checksum);
+            manifest.oldest_timestamp = relinked_entries.first().map(|e| e.timestamp);
+            manifest.newest_timestamp = relinked_entries.last().map(|e| e.timestamp);
             manifest.updated_at = Self::now_millis();
             manifest.save(&self.base_path)?;
         }
 
         {
             let mut cache = lock_mutex(&self.cache)?;
-            cache.replace(valid_entries);
+            cache.replace(relinked_entries);
         }
 
         self.update_fingerprint()?;
@@ -1045,9 +1111,12 @@ impl Mnemoria {
     /// another store via [`import`](Self::import).
     pub async fn export(&self, path: &Path) -> Result<(), crate::Error> {
         let _guard = self.file_lock.lock_shared()?;
+        self.refresh_if_stale()?;
 
-        let log_path = Manifest::log_path(&self.base_path);
-        let entries = log_reader::read_all(&log_path)?;
+        let entries = {
+            let cache = lock_mutex(&self.cache)?;
+            cache.ordered.clone()
+        };
 
         let json = serde_json::to_string_pretty(&entries)
             .map_err(|e| crate::Error::Serialization(e.to_string()))?;
@@ -1081,37 +1150,39 @@ impl Mnemoria {
         let mut oldest_timestamp = manifest.oldest_timestamp;
         let mut newest_timestamp = manifest.newest_timestamp;
 
-        if let Some(ref mut w) = *writer {
-            for entry in &entries {
-                let mut relinked = entry.clone();
-                relinked.prev_checksum = prev_checksum;
-                relinked.checksum = MemoryEntry::compute_checksum(
-                    &relinked.id,
-                    relinked.entry_type,
-                    &relinked.summary,
-                    &relinked.content,
-                    relinked.timestamp,
-                    relinked.prev_checksum,
-                    relinked.embedding.as_deref(),
-                );
+        let w = writer.as_mut().ok_or_else(|| {
+            crate::Error::Io(std::io::Error::other("Log writer not available"))
+        })?;
 
-                w.append(&relinked)?;
-                prev_checksum = relinked.checksum;
-                let relinked_timestamp = relinked.timestamp;
+        for entry in &entries {
+            let mut relinked = entry.clone();
+            relinked.prev_checksum = prev_checksum;
+            relinked.checksum = MemoryEntry::compute_checksum(
+                &relinked.id,
+                relinked.entry_type,
+                &relinked.summary,
+                &relinked.content,
+                relinked.timestamp,
+                relinked.prev_checksum,
+                relinked.embedding.as_deref(),
+            );
 
-                oldest_timestamp = Some(match oldest_timestamp {
-                    Some(current) => current.min(relinked_timestamp),
-                    None => relinked_timestamp,
-                });
-                newest_timestamp = Some(match newest_timestamp {
-                    Some(current) => current.max(relinked_timestamp),
-                    None => relinked_timestamp,
-                });
+            w.append(&relinked)?;
+            prev_checksum = relinked.checksum;
+            let relinked_timestamp = relinked.timestamp;
 
-                imported_entries.push(relinked);
+            oldest_timestamp = Some(match oldest_timestamp {
+                Some(current) => current.min(relinked_timestamp),
+                None => relinked_timestamp,
+            });
+            newest_timestamp = Some(match newest_timestamp {
+                Some(current) => current.max(relinked_timestamp),
+                None => relinked_timestamp,
+            });
 
-                count += 1;
-            }
+            imported_entries.push(relinked);
+
+            count += 1;
         }
 
         manifest.entry_count += count;

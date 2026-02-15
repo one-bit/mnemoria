@@ -129,9 +129,9 @@ impl IndexManager {
 
         let query_parser =
             QueryParser::for_index(&self.index, vec![self.summary_field, self.content_field]);
-        let query = query_parser
-            .parse_query(query)
-            .map_err(TantivyError::from)?;
+        // Use lenient parsing so that special characters in user queries
+        // (e.g. `c++`, unmatched quotes) don't cause hard errors.
+        let (query, _parse_errors) = query_parser.parse_query_lenient(query);
 
         let top_docs = searcher.search(&query, &TopDocs::with_limit(limit * 2))?;
 
@@ -146,6 +146,7 @@ impl IndexManager {
             }
         }
 
+        results.truncate(limit);
         Ok(results)
     }
 
@@ -159,9 +160,9 @@ impl IndexManager {
 
         let query_parser =
             QueryParser::for_index(&self.index, vec![self.summary_field, self.content_field]);
-        let parsed_query = query_parser
-            .parse_query(query)
-            .map_err(TantivyError::from)?;
+        // Use lenient parsing so that special characters in user queries
+        // (e.g. `c++`, unmatched quotes) don't cause hard errors.
+        let (parsed_query, _parse_errors) = query_parser.parse_query_lenient(query);
 
         let bm25_results: Vec<(String, f32)> = {
             let top_docs = searcher.search(&parsed_query, &TopDocs::with_limit(limit * 2))?;
@@ -219,6 +220,7 @@ impl IndexManager {
         if let Some(writer) = self.writer.as_mut() {
             writer.delete_all_documents()?;
             writer.commit()?;
+            self.reader.reload()?;
         }
         self.vector_store.clear();
         Ok(())

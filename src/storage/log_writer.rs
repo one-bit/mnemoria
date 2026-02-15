@@ -1,7 +1,7 @@
 use crate::types::{DurabilityMode, MemoryEntry};
 use rkyv::rancor::Error;
 use std::fs::{File, OpenOptions};
-use std::io::{Seek, SeekFrom, Write};
+use std::io::Write;
 use std::path::Path;
 
 pub struct LogWriter {
@@ -44,8 +44,6 @@ impl LogWriter {
             }
             DurabilityMode::None => {}
         }
-
-        self.file.seek(SeekFrom::End(0))?;
 
         Ok(())
     }

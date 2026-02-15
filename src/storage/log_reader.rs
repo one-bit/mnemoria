@@ -1,7 +1,7 @@
 use crate::types::MemoryEntry;
 use rkyv::rancor::Error;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 use std::path::Path;
 
 #[derive(Debug)]
@@ -11,16 +11,21 @@ pub struct RecoveryScan {
     pub total_bytes: u64,
 }
 
+/// Read all decodable entries from the binary log at `path`.
+///
+/// Parsing stops at the first record that cannot be decoded (e.g. mid-log
+/// corruption or a partial trailing write from a crash). Entries *after* the
+/// corrupt record are not returned. This is intentional: the append-only log
+/// format means corruption only occurs at the tail, and
+/// [`scan_recoverable_prefix`] handles truncation during open.
 pub fn read_all(path: &Path) -> Result<Vec<MemoryEntry>, crate::Error> {
     let mut entries = Vec::new();
 
-    if !path.exists() {
-        return Ok(entries);
-    }
-
-    let mut file = File::open(path)?;
-
-    file.seek(SeekFrom::Start(0))?;
+    let mut file = match File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(entries),
+        Err(e) => return Err(e.into()),
+    };
 
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
@@ -31,7 +36,12 @@ pub fn read_all(path: &Path) -> Result<Vec<MemoryEntry>, crate::Error> {
 
     let mut offset = 0;
     while offset + 4 <= buffer.len() {
-        let len = u32::from_le_bytes(buffer[offset..offset + 4].try_into().unwrap()) as usize;
+        // Safety: the loop guard guarantees at least 4 bytes remain.
+        let len = u32::from_le_bytes(
+            buffer[offset..offset + 4]
+                .try_into()
+                .expect("slice is exactly 4 bytes (guarded by loop condition)"),
+        ) as usize;
         offset += 4;
 
         if offset + len > buffer.len() {
@@ -85,15 +95,17 @@ pub fn validate_checksum_chain(path: &Path) -> Result<bool, crate::Error> {
 }
 
 pub fn scan_recoverable_prefix(path: &Path) -> Result<RecoveryScan, crate::Error> {
-    if !path.exists() {
-        return Ok(RecoveryScan {
-            entries: Vec::new(),
-            valid_bytes: 0,
-            total_bytes: 0,
-        });
-    }
-
-    let mut file = File::open(path)?;
+    let mut file = match File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(RecoveryScan {
+                entries: Vec::new(),
+                valid_bytes: 0,
+                total_bytes: 0,
+            });
+        }
+        Err(e) => return Err(e.into()),
+    };
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
 
@@ -105,7 +117,12 @@ pub fn scan_recoverable_prefix(path: &Path) -> Result<RecoveryScan, crate::Error
 
     while offset + 4 <= buffer.len() {
         let record_start = offset;
-        let len = u32::from_le_bytes(buffer[offset..offset + 4].try_into().unwrap()) as usize;
+        // Safety: the loop guard guarantees at least 4 bytes remain.
+        let len = u32::from_le_bytes(
+            buffer[offset..offset + 4]
+                .try_into()
+                .expect("slice is exactly 4 bytes (guarded by loop condition)"),
+        ) as usize;
         offset += 4;
 
         if offset + len > buffer.len() {

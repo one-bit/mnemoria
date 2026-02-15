@@ -22,30 +22,31 @@ use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 #[serde(rename_all = "lowercase")]
 #[clap(rename_all = "lower")]
 #[derive(Default)]
+#[repr(u8)]
 pub enum EntryType {
     /// A goal or intention to accomplish something.
-    Intent,
+    Intent = 0,
     /// Something learned or observed (default).
     #[default]
-    Discovery,
+    Discovery = 1,
     /// A decision that was made, with rationale.
-    Decision,
+    Decision = 2,
     /// A problem or issue encountered.
-    Problem,
+    Problem = 3,
     /// A solution to a previously identified problem.
-    Solution,
+    Solution = 4,
     /// A recurring pattern worth remembering.
-    Pattern,
+    Pattern = 5,
     /// A warning or caveat for future reference.
-    Warning,
+    Warning = 6,
     /// A successful outcome or achievement.
-    Success,
+    Success = 7,
     /// Notes about a refactoring effort.
-    Refactor,
+    Refactor = 8,
     /// A bug fix that was applied.
-    Bugfix,
+    Bugfix = 9,
     /// A feature that was implemented.
-    Feature,
+    Feature = 10,
 }
 
 impl std::fmt::Display for EntryType {
@@ -147,7 +148,7 @@ impl MemoryEntry {
         let id = uuid::Uuid::new_v4().to_string();
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as i64;
 
         let checksum = Self::compute_checksum(
@@ -264,7 +265,7 @@ pub enum DurabilityMode {
 /// and the `"minishlab/potion-base-8M"` embedding model.
 #[derive(Debug, Clone, SerdeSerialize, SerdeDeserialize)]
 pub struct Config {
-    /// Maximum number of entries to keep. When the store exceeds this count,
+    /// Maximum number of entries to keep. When the store reaches this count,
     /// the oldest entries are automatically rotated out. `None` means no
     /// limit (the default).
     pub max_entries: Option<u64>,

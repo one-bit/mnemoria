@@ -22,7 +22,7 @@ impl Default for Manifest {
     fn default() -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as i64;
 
         Self {
@@ -63,16 +63,24 @@ impl Manifest {
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| crate::Error::Serialization(e.to_string()))?;
 
-        let mut temp_file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&temp_path)?;
+        let write_result = (|| -> Result<(), crate::Error> {
+            let mut temp_file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&temp_path)?;
 
-        temp_file.write_all(content.as_bytes())?;
-        temp_file.flush()?;
-        temp_file.sync_all()?;
-        drop(temp_file);
+            temp_file.write_all(content.as_bytes())?;
+            temp_file.flush()?;
+            temp_file.sync_all()?;
+            Ok(())
+        })();
+
+        if let Err(e) = write_result {
+            // Best-effort cleanup of the temp file on write failure.
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(e);
+        }
 
         std::fs::rename(&temp_path, &path)?;
 
