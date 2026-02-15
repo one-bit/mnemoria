@@ -1,0 +1,53 @@
+[package]
+name = "mnemoria"
+version = "0.1.0"
+edition = "2024"
+description = "A single-file, git-friendly memory storage crate for AI agents"
+license = "MIT"
+authors = ["Mnemoria Team"]
+repository = "https://github.com/one-bit/mnemoria"
+homepage = "https://github.com/one-bit/mnemoria"
+documentation = "https://docs.rs/mnemoria"
+readme = "README.md"
+keywords = ["memory", "ai", "search", "embeddings", "llm"]
+categories = ["database", "text-processing"]
+
+[features]
+default = ["model2vec"]
+model2vec = ["dep:model2vec"]
+
+[dependencies]
+tantivy = { version = "0.25", features = ["mmap"] }
+model2vec = { version = "0.3", optional = true }
+anyhow = "1.0"
+rkyv = { version = "0.8", features = ["std", "unaligned"] }
+crc32fast = "1.4"
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+fs2 = "0.4"
+libc = "0.2"
+simsimd = "6"
+
+[dev-dependencies]
+tempfile = "3"
+tokio-test = "0.4"
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[[bench]]
+name = "api_perf"
+harness = false
+
+[[bench]]
+name = "model_comparison"
+harness = false
+
+[[bin]]
+name = "mnemoria"
+path = "src/main.rs"
