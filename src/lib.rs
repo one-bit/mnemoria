@@ -214,10 +214,7 @@ mod tests {
         }
 
         // Search without filter returns both
-        let all_results = memory
-            .search_memory("dark", 5, None)
-            .await
-            .unwrap();
+        let all_results = memory.search_memory("dark", 5, None).await.unwrap();
         assert!(all_results.len() >= 2);
     }
 
@@ -271,7 +268,12 @@ mod tests {
             .await
             .unwrap();
         memory
-            .remember("agent-a", EntryType::Discovery, "A entry 2", "From agent A again")
+            .remember(
+                "agent-a",
+                EntryType::Discovery,
+                "A entry 2",
+                "From agent A again",
+            )
             .await
             .unwrap();
 
@@ -354,10 +356,7 @@ mod tests {
         assert_eq!(count, 1);
 
         // Verify agent_name survives export/import
-        let entries = memory2
-            .timeline(TimelineOptions::default())
-            .await
-            .unwrap();
+        let entries = memory2.timeline(TimelineOptions::default()).await.unwrap();
         assert_eq!(entries[0].agent_name, "test-agent");
     }
 
@@ -634,7 +633,12 @@ mod tests {
 
         let instance_a = Mnemoria::create(&path).await.unwrap();
         instance_a
-            .remember("agent-a", EntryType::Discovery, "From A", "Written by instance A")
+            .remember(
+                "agent-a",
+                EntryType::Discovery,
+                "From A",
+                "Written by instance A",
+            )
             .await
             .unwrap();
 
@@ -645,7 +649,12 @@ mod tests {
 
         // A writes another entry
         instance_a
-            .remember("agent-a", EntryType::Decision, "From A again", "Second write by A")
+            .remember(
+                "agent-a",
+                EntryType::Decision,
+                "From A again",
+                "Second write by A",
+            )
             .await
             .unwrap();
 
@@ -658,7 +667,12 @@ mod tests {
 
         // B writes an entry
         instance_b
-            .remember("agent-b", EntryType::Problem, "From B", "Written by instance B")
+            .remember(
+                "agent-b",
+                EntryType::Problem,
+                "From B",
+                "Written by instance B",
+            )
             .await
             .unwrap();
 
@@ -796,7 +810,12 @@ mod tests {
             + &"x".repeat(200); // Ensure content > 200 bytes
 
         memory
-            .remember("test-agent", EntryType::Discovery, "Non-ASCII test", &long_content)
+            .remember(
+                "test-agent",
+                EntryType::Discovery,
+                "Non-ASCII test",
+                &long_content,
+            )
             .await
             .unwrap();
 

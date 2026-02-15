@@ -104,6 +104,7 @@ impl MemoryEntry {
     /// The checksum covers the ID, agent name, entry type, summary, content,
     /// timestamp, previous checksum, and embedding (if present). This is used
     /// both when creating new entries and when verifying existing ones.
+    #[allow(clippy::too_many_arguments)]
     pub fn compute_checksum(
         id: &str,
         agent_name: &str,

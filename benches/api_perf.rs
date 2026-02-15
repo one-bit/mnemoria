@@ -1,5 +1,5 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use mnemoria::storage::{log_reader, Manifest};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use mnemoria::storage::{Manifest, log_reader};
 use mnemoria::{Config, DurabilityMode, EntryType, Mnemoria, TimelineOptions};
 use std::hint::black_box;
 use tempfile::TempDir;

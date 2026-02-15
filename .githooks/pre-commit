@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -e
+
+echo "Running pre-commit checks..."
+
+echo "  cargo fmt --check"
+if ! cargo fmt --all -- --check 2>&1; then
+    echo ""
+    echo "ERROR: Code is not formatted. Run 'cargo fmt --all' and try again."
+    exit 1
+fi
+
+echo "  cargo clippy"
+if ! cargo clippy -- -D warnings 2>&1; then
+    echo ""
+    echo "ERROR: Clippy found warnings. Fix them and try again."
+    exit 1
+fi
+
+echo "All pre-commit checks passed."

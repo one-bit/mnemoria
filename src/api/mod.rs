@@ -884,10 +884,10 @@ impl Mnemoria {
                 break;
             }
             if let Some(entry) = cache.by_id.get(&id) {
-                if let Some(filter_name) = agent_name {
-                    if entry.agent_name != filter_name {
-                        continue;
-                    }
+                if let Some(filter_name) = agent_name
+                    && entry.agent_name != filter_name
+                {
+                    continue;
                 }
                 results.push(SearchResult {
                     id: id.clone(),

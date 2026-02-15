@@ -145,9 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             agent_name,
         } => {
             let memory = Mnemoria::open_with_config(&memory_path, config).await?;
-            let answer = memory
-                .ask_memory(&question, agent_name.as_deref())
-                .await?;
+            let answer = memory.ask_memory(&question, agent_name.as_deref()).await?;
             println!("{answer}");
         }
         Commands::Stats {} => {
