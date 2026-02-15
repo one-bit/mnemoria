@@ -1,16 +1,16 @@
 [package]
 name = "mnemoria"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
-description = "A single-file, git-friendly memory storage crate for AI agents"
+description = "Persistent, git-friendly memory storage for AI agents with hybrid semantic + full-text search"
 license = "MIT"
 authors = ["Mnemoria Team"]
 repository = "https://github.com/one-bit/mnemoria"
 homepage = "https://github.com/one-bit/mnemoria"
 documentation = "https://docs.rs/mnemoria"
 readme = "README.md"
-keywords = ["memory", "ai", "search", "embeddings", "llm"]
-categories = ["database", "text-processing"]
+keywords = ["memory", "ai", "semantic-search", "embeddings", "llm"]
+categories = ["database-implementations", "text-processing", "command-line-utilities"]
 
 [features]
 default = ["model2vec"]

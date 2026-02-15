@@ -29,7 +29,7 @@ cd mnemoria
 cargo install --path .
 ```
 
-### Via crates.io (coming soon)
+### Via crates.io
 
 ```bash
 cargo install mnemoria
