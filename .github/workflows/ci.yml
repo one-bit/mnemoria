@@ -43,3 +43,12 @@ jobs:
 
       - name: Build release
         run: cargo build --release
+
+  security:
+    name: Security & License Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependency audit & license check
+        uses: EmbarkStudios/cargo-deny-action@v2

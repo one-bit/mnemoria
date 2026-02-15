@@ -4,50 +4,52 @@
 # Run locally: cargo install cargo-deny && cargo deny check
 
 [graph]
-# Exclude dev-only dependencies from license and vulnerability checks.
-# They are not distributed with the final binary.
+# Exclude dev-only dependencies from checks — they are not shipped
+# in the final binary and don't affect end-user licensing or security.
 exclude-dev = true
 
 # --------------------------------------------------------------------------- #
-# Advisories – check for known vulnerabilities (RustSec advisory DB)
+# Advisories – check for known vulnerabilities via the RustSec advisory DB
 # --------------------------------------------------------------------------- #
 [advisories]
-# Fail on any known vulnerability
-vulnerability = "deny"
-# Warn on advisories that have been withdrawn or are informational
-unmaintained = "warn"
-yanked = "warn"
-notice = "warn"
+ignore = [
+    # Unmaintained transitive dependencies pulled in by model2vec → tokenizers.
+    # These are not direct dependencies and have no available upgrades yet.
+    { id = "RUSTSEC-2025-0119", reason = "number_prefix is a transitive dep of model2vec via indicatif; no upgrade path available" },
+    { id = "RUSTSEC-2024-0436", reason = "paste is a transitive dep of model2vec via tokenizers; no upgrade path available" },
+]
 
 # --------------------------------------------------------------------------- #
 # Licenses – ensure every dependency is compatible with MIT
 # --------------------------------------------------------------------------- #
 [licenses]
-# Reject any dependency whose license isn't in the allow list
-unlicensed = "deny"
-default = "deny"
-
-# Licenses compatible with MIT (permissive or weaker copyleft)
+# Licenses that are compatible with the project's MIT license.
 allow = [
     "MIT",
     "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
     "Zlib",
     "0BSD",
+    "MPL-2.0",
     "Unicode-3.0",
     "Unicode-DFS-2016",
     "OpenSSL",
     "BSL-1.0",
 ]
 
-# Some crates use a dual MIT/Apache-2.0 license with SPDX expressions.
-# cargo-deny needs explicit confidence threshold for heuristic detection.
 confidence-threshold = 0.8
 
+# The model2vec crate doesn't declare a license in its Cargo.toml manifest,
+# but it is published under the MIT license (see its repository).
+exceptions = [
+    { allow = ["MIT"], crate = "model2vec" },
+]
+
 # --------------------------------------------------------------------------- #
-# Bans – detect duplicate or disallowed crates
+# Bans – detect duplicate versions or disallowed crates
 # --------------------------------------------------------------------------- #
 [bans]
 multiple-versions = "warn"
