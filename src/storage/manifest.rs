@@ -3,8 +3,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub(crate) const MANIFEST_FILENAME: &str = "manifest.json";
-pub(crate) const LOG_FILENAME: &str = "log.bin";
+use crate::constants::{LOG_FILENAME, MANIFEST_FILENAME};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {

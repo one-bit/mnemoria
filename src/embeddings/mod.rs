@@ -41,8 +41,8 @@ impl EmbeddingBackend {
 
         let cache_dir = dirs::cache_dir()
             .unwrap_or_else(|| Path::new(".").to_path_buf())
-            .join(crate::types::APP_NAME)
-            .join(crate::types::MODELS_SUBDIR);
+            .join(crate::constants::APP_NAME)
+            .join(crate::constants::MODELS_SUBDIR);
 
         let model_path = cache_dir.join(model_dir_name);
 

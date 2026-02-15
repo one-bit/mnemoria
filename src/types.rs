@@ -184,16 +184,6 @@ pub enum DurabilityMode {
     None,
 }
 
-/// Application name, used as the default directory name for memory stores,
-/// cache directories, and ephemeral index prefixes.
-pub const APP_NAME: &str = "mnemoria";
-
-/// Subdirectory name for cached embedding models under the app cache directory.
-pub const MODELS_SUBDIR: &str = "models";
-
-/// Default model2vec model ID used when none is specified.
-pub const DEFAULT_MODEL_ID: &str = "minishlab/potion-base-8M";
-
 #[derive(Debug, Clone, SerdeSerialize, SerdeDeserialize)]
 pub struct Config {
     pub max_entries: Option<u64>,
@@ -211,7 +201,7 @@ impl Default for Config {
         Self {
             max_entries: None,
             durability: DurabilityMode::default(),
-            model_id: DEFAULT_MODEL_ID.to_string(),
+            model_id: crate::constants::DEFAULT_MODEL_ID.to_string(),
         }
     }
 }

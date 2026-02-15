@@ -1,4 +1,5 @@
 pub mod api;
+pub mod constants;
 pub mod embeddings;
 pub mod error;
 pub mod search;
@@ -6,10 +7,10 @@ pub mod storage;
 pub mod types;
 
 pub use api::Mnemoria;
+pub use constants::{APP_NAME, DEFAULT_MODEL_ID, MODELS_SUBDIR};
 pub use error::{Error, Result, lock_mutex};
 pub use types::{
-    APP_NAME, Config, DEFAULT_MODEL_ID, DurabilityMode, EntryType, MODELS_SUBDIR, MemoryEntry,
-    MemoryStats, SearchResult, TimelineOptions,
+    Config, DurabilityMode, EntryType, MemoryEntry, MemoryStats, SearchResult, TimelineOptions,
 };
 
 #[cfg(test)]

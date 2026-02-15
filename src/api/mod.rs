@@ -10,7 +10,7 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::storage::manifest::LOG_FILENAME;
+use crate::constants::LOG_FILENAME;
 
 const INDEX_COMMIT_BATCH_SIZE: usize = 32;
 const INDEX_DIR_PREFIX: &str = "mnemoria-idx-";
