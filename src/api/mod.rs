@@ -647,6 +647,7 @@ impl Mnemoria {
     ///
     /// # Arguments
     ///
+    /// * `agent_name` — name of the agent storing the memory
     /// * `entry_type` — category tag for the memory (e.g. [`EntryType::Discovery`])
     /// * `summary` — short, human-readable summary
     /// * `content` — full content of the memory
@@ -657,6 +658,7 @@ impl Mnemoria {
     /// updated, or the embedding model fails.
     pub async fn remember(
         &self,
+        agent_name: &str,
         entry_type: EntryType,
         summary: &str,
         content: &str,
@@ -672,6 +674,7 @@ impl Mnemoria {
         };
 
         let entry = MemoryEntry::new(
+            agent_name.to_string(),
             entry_type,
             summary.to_string(),
             content.to_string(),
@@ -687,6 +690,7 @@ impl Mnemoria {
                     entry_with_embedding.embedding = Some(embedding);
                     entry_with_embedding.checksum = MemoryEntry::compute_checksum(
                         &entry_with_embedding.id,
+                        &entry_with_embedding.agent_name,
                         entry_with_embedding.entry_type,
                         &entry_with_embedding.summary,
                         &entry_with_embedding.content,
@@ -790,6 +794,7 @@ impl Mnemoria {
             entry_with_prev.prev_checksum = new_prev_checksum;
             entry_with_prev.checksum = MemoryEntry::compute_checksum(
                 &entry_with_prev.id,
+                &entry_with_prev.agent_name,
                 entry_with_prev.entry_type,
                 &entry_with_prev.summary,
                 &entry_with_prev.content,
@@ -831,16 +836,19 @@ impl Mnemoria {
     /// are unavailable, only BM25 keyword search is used.
     ///
     /// Results are returned in descending relevance order, limited to at
-    /// most `limit` entries.
+    /// most `limit` entries. When `agent_name` is `Some`, only entries
+    /// created by the given agent are returned.
     ///
     /// # Arguments
     ///
     /// * `query` — natural language search query
     /// * `limit` — maximum number of results to return
+    /// * `agent_name` — optional agent name to filter results by
     pub async fn search_memory(
         &self,
         query: &str,
         limit: usize,
+        agent_name: Option<&str>,
     ) -> Result<Vec<SearchResult>, crate::Error> {
         let _guard = self.file_lock.lock_shared()?;
         self.refresh_if_stale()?;
@@ -854,17 +862,33 @@ impl Mnemoria {
             None
         };
 
-        let search_results = if let Some(ref emb) = query_embedding {
-            index.hybrid_search(query, Some(emb), limit)?
+        // When filtering by agent, request more candidates to compensate for
+        // entries that will be discarded after the post-filter step.
+        let fetch_limit = if agent_name.is_some() {
+            limit * 4
         } else {
-            index.search(query, limit)?
+            limit
+        };
+
+        let search_results = if let Some(ref emb) = query_embedding {
+            index.hybrid_search(query, Some(emb), fetch_limit)?
+        } else {
+            index.search(query, fetch_limit)?
         };
 
         let cache = lock_mutex(&self.cache)?;
 
         let mut results = Vec::new();
         for (id, score) in search_results {
+            if results.len() >= limit {
+                break;
+            }
             if let Some(entry) = cache.by_id.get(&id) {
+                if let Some(filter_name) = agent_name {
+                    if entry.agent_name != filter_name {
+                        continue;
+                    }
+                }
                 results.push(SearchResult {
                     id: id.clone(),
                     entry: entry.clone(),
@@ -880,12 +904,20 @@ impl Mnemoria {
     ///
     /// This is a convenience wrapper around [`search_memory`](Self::search_memory)
     /// that returns the top 5 results as a human-readable string, with each
-    /// entry's type, summary, and a truncated preview of its content.
+    /// entry's agent name, type, summary, and a truncated preview of its
+    /// content.
+    ///
+    /// When `agent_name` is `Some`, only entries from that agent are
+    /// considered.
     ///
     /// Returns `"No relevant memories found."` if no matches are found.
-    pub async fn ask_memory(&self, question: &str) -> Result<String, crate::Error> {
+    pub async fn ask_memory(
+        &self,
+        question: &str,
+        agent_name: Option<&str>,
+    ) -> Result<String, crate::Error> {
         // Note: search_memory acquires its own shared lock, so we don't double-lock here.
-        let results = self.search_memory(question, 5).await?;
+        let results = self.search_memory(question, 5, agent_name).await?;
 
         if results.is_empty() {
             return Ok("No relevant memories found.".to_string());
@@ -894,9 +926,10 @@ impl Mnemoria {
         let mut response = String::from("Based on my memory:\n\n");
         for (i, result) in results.iter().enumerate() {
             response.push_str(&format!(
-                "{}. [{}] {}\n",
+                "{}. [{}] ({}) {}\n",
                 i + 1,
                 result.entry.entry_type,
+                result.entry.agent_name,
                 result.entry.summary
             ));
             let truncated = truncate_at_char_boundary(&result.entry.content, 200);
@@ -949,7 +982,11 @@ impl Mnemoria {
         let matches_filters = |entry: &MemoryEntry| {
             let since_ok = options.since.is_none_or(|s| entry.timestamp >= s);
             let until_ok = options.until.is_none_or(|u| entry.timestamp <= u);
-            since_ok && until_ok
+            let agent_ok = options
+                .agent_name
+                .as_ref()
+                .is_none_or(|name| entry.agent_name == *name);
+            since_ok && until_ok && agent_ok
         };
 
         if options.reverse {
@@ -1045,6 +1082,7 @@ impl Mnemoria {
             .filter(|e| {
                 let expected = MemoryEntry::compute_checksum(
                     &e.id,
+                    &e.agent_name,
                     e.entry_type,
                     &e.summary,
                     &e.content,
@@ -1066,6 +1104,7 @@ impl Mnemoria {
             relinked.prev_checksum = new_prev_checksum;
             relinked.checksum = MemoryEntry::compute_checksum(
                 &relinked.id,
+                &relinked.agent_name,
                 relinked.entry_type,
                 &relinked.summary,
                 &relinked.content,
@@ -1159,6 +1198,7 @@ impl Mnemoria {
             relinked.prev_checksum = prev_checksum;
             relinked.checksum = MemoryEntry::compute_checksum(
                 &relinked.id,
+                &relinked.agent_name,
                 relinked.entry_type,
                 &relinked.summary,
                 &relinked.content,

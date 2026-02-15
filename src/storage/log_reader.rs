@@ -72,6 +72,7 @@ pub fn validate_checksum_chain(path: &Path) -> Result<bool, crate::Error> {
     for entry in &entries {
         let expected_checksum = MemoryEntry::compute_checksum(
             &entry.id,
+            &entry.agent_name,
             entry.entry_type,
             &entry.summary,
             &entry.content,
@@ -144,6 +145,7 @@ pub fn scan_recoverable_prefix(path: &Path) -> Result<RecoveryScan, crate::Error
 
         let expected_checksum = MemoryEntry::compute_checksum(
             &entry.id,
+            &entry.agent_name,
             entry.entry_type,
             &entry.summary,
             &entry.content,

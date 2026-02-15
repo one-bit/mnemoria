@@ -80,6 +80,8 @@ impl std::fmt::Display for EntryType {
 pub struct MemoryEntry {
     /// Unique identifier (UUID v4 string).
     pub id: String,
+    /// Name of the agent that created this memory.
+    pub agent_name: String,
     /// Category tag for this memory.
     pub entry_type: EntryType,
     /// Short, human-readable summary of the memory.
@@ -99,11 +101,12 @@ pub struct MemoryEntry {
 impl MemoryEntry {
     /// Compute the CRC32 checksum for an entry with the given fields.
     ///
-    /// The checksum covers the ID, entry type, summary, content, timestamp,
-    /// previous checksum, and embedding (if present). This is used both when
-    /// creating new entries and when verifying existing ones.
+    /// The checksum covers the ID, agent name, entry type, summary, content,
+    /// timestamp, previous checksum, and embedding (if present). This is used
+    /// both when creating new entries and when verifying existing ones.
     pub fn compute_checksum(
         id: &str,
+        agent_name: &str,
         entry_type: EntryType,
         summary: &str,
         content: &str,
@@ -113,6 +116,7 @@ impl MemoryEntry {
     ) -> u32 {
         let mut hasher = crc32fast::Hasher::new();
         hasher.update(id.as_bytes());
+        hasher.update(agent_name.as_bytes());
         hasher.update(&[entry_type as u8]);
         hasher.update(summary.as_bytes());
         hasher.update(content.as_bytes());
@@ -140,6 +144,7 @@ impl MemoryEntry {
     /// [`Mnemoria::remember`](crate::Mnemoria::remember) if the embedding
     /// backend is available.
     pub fn new(
+        agent_name: String,
         entry_type: EntryType,
         summary: String,
         content: String,
@@ -153,6 +158,7 @@ impl MemoryEntry {
 
         let checksum = Self::compute_checksum(
             &id,
+            &agent_name,
             entry_type,
             &summary,
             &content,
@@ -163,6 +169,7 @@ impl MemoryEntry {
 
         Self {
             id,
+            agent_name,
             entry_type,
             summary,
             content,
@@ -224,6 +231,8 @@ pub struct TimelineOptions {
     /// If `true`, return entries in reverse chronological order (newest
     /// first). Defaults to `true`.
     pub reverse: bool,
+    /// Only include entries created by this agent. `None` means all agents.
+    pub agent_name: Option<String>,
 }
 
 impl Default for TimelineOptions {
@@ -233,6 +242,7 @@ impl Default for TimelineOptions {
             since: None,
             until: None,
             reverse: true,
+            agent_name: None,
         }
     }
 }

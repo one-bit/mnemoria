@@ -1,5 +1,5 @@
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use mnemoria::storage::{Manifest, log_reader};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use mnemoria::storage::{log_reader, Manifest};
 use mnemoria::{Config, DurabilityMode, EntryType, Mnemoria, TimelineOptions};
 use std::hint::black_box;
 use tempfile::TempDir;
@@ -29,7 +29,7 @@ fn seed_memory_with_durability(rt: &Runtime, count: usize, durability: Durabilit
             format!("entry {i} filler content")
         };
 
-        rt.block_on(memory.remember(EntryType::Discovery, &summary, &content))
+        rt.block_on(memory.remember("bench-agent", EntryType::Discovery, &summary, &content))
             .expect("failed to add entry");
     }
 
@@ -49,7 +49,7 @@ fn bench_search_memory(c: &mut Criterion) {
         group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.iter(|| {
-                rt.block_on(memory.search_memory("rust perf query", 10))
+                rt.block_on(memory.search_memory("rust perf query", 10, None))
                     .expect("search failed");
             });
         });
@@ -79,6 +79,7 @@ fn bench_timeline_cached(c: &mut Criterion) {
                     since: None,
                     until: None,
                     reverse: true,
+                    agent_name: None,
                 }))
                 .expect("timeline failed");
             });
@@ -131,7 +132,12 @@ fn bench_get_cached(c: &mut Criterion) {
                 let summary = format!("summary {i}");
                 let content = format!("content {i}");
                 let id = rt
-                    .block_on(memory.remember(EntryType::Discovery, &summary, &content))
+                    .block_on(memory.remember(
+                        "bench-agent",
+                        EntryType::Discovery,
+                        &summary,
+                        &content,
+                    ))
                     .expect("failed to add entry");
                 ids.push(id);
             }
@@ -174,7 +180,12 @@ fn bench_get_disk_scan(c: &mut Criterion) {
                 let summary = format!("summary {i}");
                 let content = format!("content {i}");
                 let id = rt
-                    .block_on(memory.remember(EntryType::Discovery, &summary, &content))
+                    .block_on(memory.remember(
+                        "bench-agent",
+                        EntryType::Discovery,
+                        &summary,
+                        &content,
+                    ))
                     .expect("failed to add entry");
                 ids.push(id);
             }
@@ -235,6 +246,7 @@ fn bench_write_throughput(c: &mut Criterion) {
                 |(_temp_dir, memory)| {
                     for i in 0..WRITE_BATCH {
                         rt.block_on(memory.remember(
+                            "bench-agent",
                             EntryType::Discovery,
                             &format!("bench entry {i}"),
                             &format!("bench content for entry {i}"),
@@ -268,7 +280,7 @@ fn bench_search_latency(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.iter(|| {
-                rt.block_on(memory.search_memory("rust perf query", 10))
+                rt.block_on(memory.search_memory("rust perf query", 10, None))
                     .expect("search failed");
             });
         });

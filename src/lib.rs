@@ -34,13 +34,14 @@
 //!
 //! // Store a memory
 //! let id = memory.remember(
+//!     "my-agent",
 //!     EntryType::Discovery,
 //!     "Rust async patterns",
 //!     "Use tokio::spawn for CPU-bound work inside async contexts",
 //! ).await?;
 //!
 //! // Search by meaning
-//! let results = memory.search_memory("async concurrency", 5).await?;
+//! let results = memory.search_memory("async concurrency", 5, None).await?;
 //! for result in &results {
 //!     println!("[{}] {} (score: {:.3})", result.entry.entry_type, result.entry.summary, result.score);
 //! }
@@ -122,6 +123,7 @@ mod tests {
         let memory = Mnemoria::create(&path).await.unwrap();
         let id = memory
             .remember(
+                "test-agent",
                 EntryType::Decision,
                 "Test decision",
                 "This is a test decision content",
@@ -133,6 +135,10 @@ mod tests {
 
         let stats = memory.memory_stats().await.unwrap();
         assert_eq!(stats.total_entries, 1);
+
+        // Verify agent_name is stored
+        let entry = memory.get(&id).await.unwrap().unwrap();
+        assert_eq!(entry.agent_name, "test-agent");
     }
 
     #[tokio::test]
@@ -144,6 +150,7 @@ mod tests {
 
         memory
             .remember(
+                "agent-a",
                 EntryType::Decision,
                 "User prefers dark mode",
                 "The user prefers dark mode in their IDE for reduced eye strain.",
@@ -153,6 +160,7 @@ mod tests {
 
         memory
             .remember(
+                "agent-b",
                 EntryType::Feature,
                 "User likes autocomplete",
                 "The user heavily relies on AI autocomplete for coding efficiency.",
@@ -161,11 +169,56 @@ mod tests {
             .unwrap();
 
         let results = memory
-            .search_memory("dark mode preference", 5)
+            .search_memory("dark mode preference", 5, None)
             .await
             .unwrap();
         assert!(!results.is_empty());
         assert!(results[0].score >= 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_search_memory_filter_by_agent() {
+        let temp_dir = create_temp_dir();
+        let path = PathBuf::from(temp_dir.path());
+
+        let memory = Mnemoria::create(&path).await.unwrap();
+
+        memory
+            .remember(
+                "agent-a",
+                EntryType::Decision,
+                "Dark mode setting",
+                "User prefers dark mode in their IDE.",
+            )
+            .await
+            .unwrap();
+
+        memory
+            .remember(
+                "agent-b",
+                EntryType::Decision,
+                "Dark theme preference",
+                "Dark theme is preferred for the web app.",
+            )
+            .await
+            .unwrap();
+
+        // Search with agent filter should only return agent-a's entry
+        let results = memory
+            .search_memory("dark mode", 5, Some("agent-a"))
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+        for result in &results {
+            assert_eq!(result.entry.agent_name, "agent-a");
+        }
+
+        // Search without filter returns both
+        let all_results = memory
+            .search_memory("dark", 5, None)
+            .await
+            .unwrap();
+        assert!(all_results.len() >= 2);
     }
 
     #[tokio::test]
@@ -176,15 +229,15 @@ mod tests {
         let memory = Mnemoria::create(&path).await.unwrap();
 
         memory
-            .remember(EntryType::Discovery, "First", "First entry")
+            .remember("test-agent", EntryType::Discovery, "First", "First entry")
             .await
             .unwrap();
         memory
-            .remember(EntryType::Discovery, "Second", "Second entry")
+            .remember("test-agent", EntryType::Discovery, "Second", "Second entry")
             .await
             .unwrap();
         memory
-            .remember(EntryType::Discovery, "Third", "Third entry")
+            .remember("test-agent", EntryType::Discovery, "Third", "Third entry")
             .await
             .unwrap();
 
@@ -194,11 +247,49 @@ mod tests {
                 since: None,
                 until: None,
                 reverse: true,
+                agent_name: None,
             })
             .await
             .unwrap();
 
         assert_eq!(timeline.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_timeline_filter_by_agent() {
+        let temp_dir = create_temp_dir();
+        let path = PathBuf::from(temp_dir.path());
+
+        let memory = Mnemoria::create(&path).await.unwrap();
+
+        memory
+            .remember("agent-a", EntryType::Discovery, "A entry", "From agent A")
+            .await
+            .unwrap();
+        memory
+            .remember("agent-b", EntryType::Discovery, "B entry", "From agent B")
+            .await
+            .unwrap();
+        memory
+            .remember("agent-a", EntryType::Discovery, "A entry 2", "From agent A again")
+            .await
+            .unwrap();
+
+        let timeline = memory
+            .timeline(TimelineOptions {
+                limit: 10,
+                since: None,
+                until: None,
+                reverse: true,
+                agent_name: Some("agent-a".to_string()),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(timeline.len(), 2);
+        for entry in &timeline {
+            assert_eq!(entry.agent_name, "agent-a");
+        }
     }
 
     #[tokio::test]
@@ -209,7 +300,7 @@ mod tests {
         let memory = Mnemoria::create(&path).await.unwrap();
 
         memory
-            .remember(EntryType::Decision, "Test", "Content")
+            .remember("test-agent", EntryType::Decision, "Test", "Content")
             .await
             .unwrap();
 
@@ -225,11 +316,11 @@ mod tests {
         let memory = Mnemoria::create(&path).await.unwrap();
 
         memory
-            .remember(EntryType::Discovery, "Test 1", "Content 1")
+            .remember("test-agent", EntryType::Discovery, "Test 1", "Content 1")
             .await
             .unwrap();
         memory
-            .remember(EntryType::Discovery, "Test 2", "Content 2")
+            .remember("test-agent", EntryType::Discovery, "Test 2", "Content 2")
             .await
             .unwrap();
 
@@ -249,7 +340,7 @@ mod tests {
         let memory = Mnemoria::create(&path).await.unwrap();
 
         memory
-            .remember(EntryType::Decision, "Test", "Content")
+            .remember("test-agent", EntryType::Decision, "Test", "Content")
             .await
             .unwrap();
 
@@ -261,6 +352,13 @@ mod tests {
         let count = memory2.import(&export_path).await.unwrap();
 
         assert_eq!(count, 1);
+
+        // Verify agent_name survives export/import
+        let entries = memory2
+            .timeline(TimelineOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(entries[0].agent_name, "test-agent");
     }
 
     #[tokio::test]
@@ -271,13 +369,15 @@ mod tests {
         let memory = Mnemoria::create(&path).await.unwrap();
 
         let id = memory
-            .remember(EntryType::Decision, "Test", "Content")
+            .remember("test-agent", EntryType::Decision, "Test", "Content")
             .await
             .unwrap();
 
         let entry = memory.get(&id).await.unwrap();
         assert!(entry.is_some());
-        assert_eq!(entry.unwrap().summary, "Test");
+        let entry = entry.unwrap();
+        assert_eq!(entry.summary, "Test");
+        assert_eq!(entry.agent_name, "test-agent");
     }
 
     #[tokio::test]
@@ -288,11 +388,11 @@ mod tests {
         let memory = Mnemoria::create(&path).await.unwrap();
 
         memory
-            .remember(EntryType::Discovery, "Test 1", "Content 1")
+            .remember("test-agent", EntryType::Discovery, "Test 1", "Content 1")
             .await
             .unwrap();
         memory
-            .remember(EntryType::Discovery, "Test 2", "Content 2")
+            .remember("test-agent", EntryType::Discovery, "Test 2", "Content 2")
             .await
             .unwrap();
 
@@ -310,13 +410,13 @@ mod tests {
         let memory = Mnemoria::create(&path).await.unwrap();
 
         memory
-            .remember(EntryType::Discovery, "Test", "Content")
+            .remember("test-agent", EntryType::Discovery, "Test", "Content")
             .await
             .unwrap();
 
         memory.rebuild_index().await.unwrap();
 
-        let results = memory.search_memory("Test", 5).await.unwrap();
+        let results = memory.search_memory("Test", 5, None).await.unwrap();
         assert!(!results.is_empty());
     }
 
@@ -333,19 +433,19 @@ mod tests {
         let memory = Mnemoria::create_with_config(&path, config).await.unwrap();
 
         memory
-            .remember(EntryType::Discovery, "Entry 1", "Content 1")
+            .remember("test-agent", EntryType::Discovery, "Entry 1", "Content 1")
             .await
             .unwrap();
         memory
-            .remember(EntryType::Discovery, "Entry 2", "Content 2")
+            .remember("test-agent", EntryType::Discovery, "Entry 2", "Content 2")
             .await
             .unwrap();
         memory
-            .remember(EntryType::Discovery, "Entry 3", "Content 3")
+            .remember("test-agent", EntryType::Discovery, "Entry 3", "Content 3")
             .await
             .unwrap();
         memory
-            .remember(EntryType::Discovery, "Entry 4", "Content 4")
+            .remember("test-agent", EntryType::Discovery, "Entry 4", "Content 4")
             .await
             .unwrap();
 
@@ -360,12 +460,13 @@ mod tests {
 
         let memory = Mnemoria::create(&path).await.unwrap();
         memory
-            .remember(EntryType::Discovery, "Entry 1", "Content 1")
+            .remember("test-agent", EntryType::Discovery, "Entry 1", "Content 1")
             .await
             .unwrap();
 
         let manifest_before = Manifest::load(&path).unwrap();
         let entry2 = MemoryEntry::new(
+            "test-agent".to_string(),
             EntryType::Discovery,
             "Entry 2".to_string(),
             "Content 2".to_string(),
@@ -391,7 +492,7 @@ mod tests {
 
         let memory = Mnemoria::create(&path).await.unwrap();
         memory
-            .remember(EntryType::Discovery, "Entry 1", "Content 1")
+            .remember("test-agent", EntryType::Discovery, "Entry 1", "Content 1")
             .await
             .unwrap();
 
@@ -418,7 +519,7 @@ mod tests {
 
         let memory = Mnemoria::create(&path).await.unwrap();
         memory
-            .remember(EntryType::Discovery, "Entry 1", "Content 1")
+            .remember("test-agent", EntryType::Discovery, "Entry 1", "Content 1")
             .await
             .unwrap();
         drop(memory);
@@ -440,6 +541,7 @@ mod tests {
         let memory = Mnemoria::create(&path).await.unwrap();
         memory
             .remember(
+                "test-agent",
                 EntryType::Discovery,
                 "Neural memory retrieval",
                 "Vector embeddings help retrieve semantically related memories.",
@@ -448,6 +550,7 @@ mod tests {
             .unwrap();
         memory
             .remember(
+                "test-agent",
                 EntryType::Discovery,
                 "CLI ergonomics",
                 "Improve command ergonomics and shell UX.",
@@ -456,7 +559,7 @@ mod tests {
             .unwrap();
 
         let query = "semantic retrieval with embeddings";
-        let before = memory.search_memory(query, 5).await.unwrap();
+        let before = memory.search_memory(query, 5, None).await.unwrap();
 
         if before.is_empty() {
             return;
@@ -466,7 +569,7 @@ mod tests {
         drop(memory);
 
         let reopened = Mnemoria::open(&path).await.unwrap();
-        let after = reopened.search_memory(query, 5).await.unwrap();
+        let after = reopened.search_memory(query, 5, None).await.unwrap();
         let after_ids: Vec<String> = after.iter().map(|r| r.id.clone()).collect();
 
         assert_eq!(after_ids, before_ids);
@@ -480,6 +583,7 @@ mod tests {
         let memory = Mnemoria::create(&path).await.unwrap();
         memory
             .remember(
+                "test-agent",
                 EntryType::Discovery,
                 "Index rebuild candidate",
                 "This entry should remain searchable after reopen.",
@@ -492,7 +596,7 @@ mod tests {
         // so entries are always searchable after reopen.
         let reopened = Mnemoria::open(&path).await.unwrap();
         let results = reopened
-            .search_memory("searchable after reopen", 5)
+            .search_memory("searchable after reopen", 5, None)
             .await
             .unwrap();
         assert!(!results.is_empty());
@@ -506,6 +610,7 @@ mod tests {
         let memory = Mnemoria::create(&path).await.unwrap();
         memory
             .remember(
+                "test-agent",
                 EntryType::Discovery,
                 "Deferred index entry",
                 "This entry is written before any explicit search commit.",
@@ -516,7 +621,7 @@ mod tests {
 
         let reopened = Mnemoria::open(&path).await.unwrap();
         let results = reopened
-            .search_memory("deferred explicit search", 5)
+            .search_memory("deferred explicit search", 5, None)
             .await
             .unwrap();
         assert!(!results.is_empty());
@@ -529,7 +634,7 @@ mod tests {
 
         let instance_a = Mnemoria::create(&path).await.unwrap();
         instance_a
-            .remember(EntryType::Discovery, "From A", "Written by instance A")
+            .remember("agent-a", EntryType::Discovery, "From A", "Written by instance A")
             .await
             .unwrap();
 
@@ -540,7 +645,7 @@ mod tests {
 
         // A writes another entry
         instance_a
-            .remember(EntryType::Decision, "From A again", "Second write by A")
+            .remember("agent-a", EntryType::Decision, "From A again", "Second write by A")
             .await
             .unwrap();
 
@@ -553,7 +658,7 @@ mod tests {
 
         // B writes an entry
         instance_b
-            .remember(EntryType::Problem, "From B", "Written by instance B")
+            .remember("agent-b", EntryType::Problem, "From B", "Written by instance B")
             .await
             .unwrap();
 
@@ -582,6 +687,7 @@ mod tests {
             if i % 2 == 0 {
                 instance_a
                     .remember(
+                        "agent-a",
                         EntryType::Discovery,
                         &format!("A-{i}"),
                         &format!("Content from A iteration {i}"),
@@ -591,6 +697,7 @@ mod tests {
             } else {
                 instance_b
                     .remember(
+                        "agent-b",
                         EntryType::Decision,
                         &format!("B-{i}"),
                         &format!("Content from B iteration {i}"),
@@ -617,11 +724,11 @@ mod tests {
 
         let instance_a = Mnemoria::create(&path).await.unwrap();
         instance_a
-            .remember(EntryType::Discovery, "Entry 1", "Content 1")
+            .remember("agent-a", EntryType::Discovery, "Entry 1", "Content 1")
             .await
             .unwrap();
         instance_a
-            .remember(EntryType::Discovery, "Entry 2", "Content 2")
+            .remember("agent-a", EntryType::Discovery, "Entry 2", "Content 2")
             .await
             .unwrap();
 
@@ -635,7 +742,7 @@ mod tests {
         assert_eq!(stats_b.total_entries, 2);
 
         instance_b
-            .remember(EntryType::Decision, "Entry 3", "Content 3")
+            .remember("agent-b", EntryType::Decision, "Entry 3", "Content 3")
             .await
             .unwrap();
 
@@ -659,6 +766,7 @@ mod tests {
         for i in 0..10 {
             memory
                 .remember(
+                    "test-agent",
                     EntryType::Discovery,
                     &format!("Entry {i}"),
                     &format!("Content {i}"),
@@ -688,12 +796,12 @@ mod tests {
             + &"x".repeat(200); // Ensure content > 200 bytes
 
         memory
-            .remember(EntryType::Discovery, "Non-ASCII test", &long_content)
+            .remember("test-agent", EntryType::Discovery, "Non-ASCII test", &long_content)
             .await
             .unwrap();
 
         // This must not panic even though content > 200 bytes with multi-byte chars
-        let answer = memory.ask_memory("Non-ASCII test").await.unwrap();
+        let answer = memory.ask_memory("Non-ASCII test", None).await.unwrap();
         assert!(answer.contains("...") || answer.contains("Non-ASCII"));
     }
 
@@ -712,6 +820,7 @@ mod tests {
         for i in 0..10 {
             memory
                 .remember(
+                    "test-agent",
                     EntryType::Discovery,
                     &format!("Entry {i}"),
                     &format!("Content {i}"),

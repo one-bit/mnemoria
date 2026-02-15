@@ -23,6 +23,10 @@ enum Commands {
         name: Option<String>,
     },
     Add {
+        /// Name of the agent storing the memory.
+        #[arg(short = 'a', long = "agent")]
+        agent_name: String,
+
         #[arg(short = 't', long = "type", value_enum, default_value_t = EntryType::Discovery)]
         entry_type: EntryType,
 
@@ -36,9 +40,17 @@ enum Commands {
 
         #[arg(short, long, default_value = "10")]
         limit: usize,
+
+        /// Filter results to only this agent's entries.
+        #[arg(short = 'a', long = "agent")]
+        agent_name: Option<String>,
     },
     Ask {
         question: String,
+
+        /// Filter results to only this agent's entries.
+        #[arg(short = 'a', long = "agent")]
+        agent_name: Option<String>,
     },
     Stats {},
     Verify {},
@@ -54,6 +66,10 @@ enum Commands {
 
         #[arg(short, long, default_value_t = true)]
         reverse: bool,
+
+        /// Filter entries to only this agent.
+        #[arg(short = 'a', long = "agent")]
+        agent_name: Option<String>,
     },
     RebuildIndex {},
     Compact {},
@@ -92,31 +108,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Total entries: {}", stats.total_entries);
         }
         Commands::Add {
+            agent_name,
             entry_type,
             summary,
             content,
         } => {
             let memory = Mnemoria::open_with_config(&memory_path, config).await?;
-            let id = memory.remember(entry_type, &summary, &content).await?;
+            let id = memory
+                .remember(&agent_name, entry_type, &summary, &content)
+                .await?;
             println!("Added entry: {id}");
         }
-        Commands::Search { query, limit } => {
+        Commands::Search {
+            query,
+            limit,
+            agent_name,
+        } => {
             let memory = Mnemoria::open_with_config(&memory_path, config).await?;
-            let results = memory.search_memory(&query, limit).await?;
+            let results = memory
+                .search_memory(&query, limit, agent_name.as_deref())
+                .await?;
             println!("Found {} results:", results.len());
             for (i, result) in results.iter().enumerate() {
                 println!(
-                    "{}. [{}] {} (score: {:.3})",
+                    "{}. [{}] ({}) {} (score: {:.3})",
                     i + 1,
                     result.entry.entry_type,
+                    result.entry.agent_name,
                     result.entry.summary,
                     result.score
                 );
             }
         }
-        Commands::Ask { question } => {
+        Commands::Ask {
+            question,
+            agent_name,
+        } => {
             let memory = Mnemoria::open_with_config(&memory_path, config).await?;
-            let answer = memory.ask_memory(&question).await?;
+            let answer = memory
+                .ask_memory(&question, agent_name.as_deref())
+                .await?;
             println!("{answer}");
         }
         Commands::Stats {} => {
@@ -147,6 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             since,
             until,
             reverse,
+            agent_name,
         } => {
             let memory = Mnemoria::open_with_config(&memory_path, config).await?;
             let entries = memory
@@ -155,14 +187,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     since,
                     until,
                     reverse,
+                    agent_name,
                 })
                 .await?;
             println!("Timeline ({} entries):", entries.len());
             for (i, entry) in entries.iter().enumerate() {
                 println!(
-                    "{}. [{}] {} - {}",
+                    "{}. [{}] ({}) {} - {}",
                     i + 1,
                     entry.entry_type,
+                    entry.agent_name,
                     entry.summary,
                     entry.timestamp
                 );

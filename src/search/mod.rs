@@ -14,6 +14,7 @@ const TANTIVY_WRITER_HEAP_BYTES: usize = 50_000_000;
 
 // Tantivy schema field names.
 const FIELD_ID: &str = "id";
+const FIELD_AGENT_NAME: &str = "agent_name";
 const FIELD_SUMMARY: &str = "summary";
 const FIELD_CONTENT: &str = "content";
 const FIELD_ENTRY_TYPE: &str = "entry_type";
@@ -31,6 +32,7 @@ pub struct IndexManager {
     writer: Option<IndexWriter>,
     // Cached field handles (resolved once in new())
     id_field: Field,
+    agent_name_field: Field,
     summary_field: Field,
     content_field: Field,
     entry_type_field: Field,
@@ -48,6 +50,7 @@ impl IndexManager {
     pub fn new(index_path: &Path) -> Result<Self, crate::Error> {
         let mut schema_builder = Schema::builder();
         schema_builder.add_text_field(FIELD_ID, STRING | STORED);
+        schema_builder.add_text_field(FIELD_AGENT_NAME, STRING | STORED);
         schema_builder.add_text_field(FIELD_SUMMARY, TEXT | STORED);
         schema_builder.add_text_field(FIELD_CONTENT, TEXT | STORED);
         schema_builder.add_text_field(FIELD_ENTRY_TYPE, STRING | STORED);
@@ -66,6 +69,9 @@ impl IndexManager {
 
         // Resolve field handles once — safe because we just built the schema above.
         let id_field = schema.get_field(FIELD_ID).expect("schema missing id field");
+        let agent_name_field = schema
+            .get_field(FIELD_AGENT_NAME)
+            .expect("schema missing agent_name field");
         let summary_field = schema
             .get_field(FIELD_SUMMARY)
             .expect("schema missing summary field");
@@ -84,6 +90,7 @@ impl IndexManager {
             reader,
             writer: Some(writer),
             id_field,
+            agent_name_field,
             summary_field,
             content_field,
             entry_type_field,
@@ -101,6 +108,7 @@ impl IndexManager {
 
         let mut doc = TantivyDocument::new();
         doc.add_text(self.id_field, &entry.id);
+        doc.add_text(self.agent_name_field, &entry.agent_name);
         doc.add_text(self.summary_field, &entry.summary);
         doc.add_text(self.content_field, &entry.content);
         doc.add_text(self.entry_type_field, entry.entry_type.to_string());

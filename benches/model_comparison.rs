@@ -635,7 +635,7 @@ fn populate_corpus(rt: &Runtime, memory: &Mnemoria) -> Vec<String> {
     let mut ids = Vec::with_capacity(CORPUS.len());
     for (summary, content) in CORPUS {
         let id = rt
-            .block_on(memory.remember(EntryType::Discovery, summary, content))
+            .block_on(memory.remember("bench-agent", EntryType::Discovery, summary, content))
             .expect("failed to add entry");
         ids.push(id);
     }
@@ -728,7 +728,7 @@ fn evaluate_hybrid_accuracy(
 
     for tc in TEST_CASES {
         let results = rt
-            .block_on(memory.search_memory(tc.query, 5))
+            .block_on(memory.search_memory(tc.query, 5, None))
             .expect("search failed");
 
         let expected_id = &corpus_ids[tc.expected_index];
@@ -790,7 +790,7 @@ fn evaluate_performance(rt: &Runtime, model_id: &str) -> PerformanceResult {
     let (temp_dir_w, memory_w) = create_memory_with_model(rt, model_id);
     let start = Instant::now();
     for i in 0..write_count {
-        rt.block_on(memory_w.remember(
+        rt.block_on(memory_w.remember("bench-agent",
             EntryType::Discovery,
             &format!("Benchmark entry {i}"),
             &format!(
@@ -823,7 +823,7 @@ fn evaluate_performance(rt: &Runtime, model_id: &str) -> PerformanceResult {
     let start = Instant::now();
     for i in 0..search_runs {
         let query = queries[i % queries.len()];
-        rt.block_on(memory_s.search_memory(query, 5))
+        rt.block_on(memory_s.search_memory(query, 5, None))
             .expect("search failed");
     }
     let search_total = start.elapsed();
