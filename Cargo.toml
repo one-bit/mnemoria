@@ -9,7 +9,7 @@ repository = "https://github.com/one-bit/mnemoria"
 homepage = "https://github.com/one-bit/mnemoria"
 documentation = "https://docs.rs/mnemoria"
 readme = "README.md"
-keywords = ["memory", "ai", "semantic-search", "embeddings", "llm"]
+keywords = ["agents", "vector-store", "semantic-search", "memory", "ai"]
 categories = ["database-implementations", "text-processing", "command-line-utilities"]
 
 [features]
