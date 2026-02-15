@@ -2,9 +2,6 @@
 /// cache directories, and ephemeral index prefixes.
 pub const APP_NAME: &str = "mnemoria";
 
-/// Subdirectory name for cached embedding models under the app cache directory.
-pub const MODELS_SUBDIR: &str = "models";
-
 /// Default model2vec model ID used when none is specified.
 pub const DEFAULT_MODEL_ID: &str = "minishlab/potion-base-8M";
 

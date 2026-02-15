@@ -42,31 +42,85 @@ impl EmbeddingBackend {
     fn try_load_model(model_id: &str) -> Result<model2vec::Model2Vec, crate::Error> {
         use std::path::Path;
 
-        // Derive a directory-safe name from the model ID.
-        // e.g. "minishlab/potion-base-8M" -> "potion-base-8M"
-        let model_dir_name = model_id.rsplit('/').next().unwrap_or(model_id);
+        // If the model_id is already an absolute path to a directory, try it directly.
+        let as_path = Path::new(model_id);
+        if as_path.is_absolute() && as_path.is_dir() {
+            return model2vec::Model2Vec::from_pretrained(as_path, None, None)
+                .map_err(|e: anyhow::Error| crate::Error::Embedding(e.to_string()));
+        }
 
-        let cache_dir = dirs::cache_dir()
-            .unwrap_or_else(|| Path::new(".").to_path_buf())
-            .join(crate::constants::APP_NAME)
-            .join(crate::constants::MODELS_SUBDIR);
-
-        let model_path = cache_dir.join(model_dir_name);
-
-        if model_path.exists() && model_path.join("tokenizer.json").exists() {
+        // Look up the model in the HuggingFace cache.
+        // HF cache layout: <cache>/huggingface/hub/models--<org>--<name>/snapshots/<hash>/
+        if let Some(model_path) = Self::resolve_hf_cache_path(model_id) {
             match model2vec::Model2Vec::from_pretrained(&model_path, None, None) {
                 Ok(model) => return Ok(model),
                 Err(e) => {
-                    tracing::warn!("Failed to load model from cache: {}", e);
+                    tracing::warn!(
+                        "Found model in HuggingFace cache at {} but failed to load: {}",
+                        model_path.display(),
+                        e
+                    );
                 }
             }
         }
 
-        std::fs::create_dir_all(&cache_dir)
-            .map_err(|e| crate::Error::Embedding(format!("Failed to create cache dir: {e}")))?;
+        Err(crate::Error::Embedding(format!(
+            "Model '{}' not found in HuggingFace cache (~/.cache/huggingface/hub/). \
+             Download it first with: pip install huggingface_hub && \
+             huggingface-cli download {}",
+            model_id, model_id
+        )))
+    }
 
-        model2vec::Model2Vec::from_pretrained(model_id, None, None)
-            .map_err(|e: anyhow::Error| crate::Error::Embedding(e.to_string()))
+    /// Resolve a HuggingFace model ID to a local snapshot path in the HF cache.
+    ///
+    /// The HuggingFace cache layout is:
+    /// ```text
+    /// <cache_dir>/huggingface/hub/models--<org>--<name>/
+    ///   refs/main         -> contains the commit hash
+    ///   snapshots/<hash>/ -> tokenizer.json, model.safetensors, config.json
+    /// ```
+    ///
+    /// Respects the `HF_HOME` and `HF_HUB_CACHE` / `HUGGINGFACE_HUB_CACHE`
+    /// environment variables, falling back to `~/.cache/huggingface/hub`.
+    #[cfg(feature = "model2vec")]
+    fn resolve_hf_cache_path(model_id: &str) -> Option<std::path::PathBuf> {
+        use std::path::PathBuf;
+
+        // Determine the HF hub cache directory, respecting env vars.
+        let hub_cache = if let Ok(dir) = std::env::var("HF_HUB_CACHE") {
+            PathBuf::from(dir)
+        } else if let Ok(dir) = std::env::var("HUGGINGFACE_HUB_CACHE") {
+            PathBuf::from(dir)
+        } else if let Ok(hf_home) = std::env::var("HF_HOME") {
+            PathBuf::from(hf_home).join("hub")
+        } else {
+            dirs::cache_dir()?.join("huggingface").join("hub")
+        };
+
+        // HF encodes model IDs as "models--<org>--<name>"
+        let hf_dir_name = format!("models--{}", model_id.replace('/', "--"));
+        let model_dir = hub_cache.join(&hf_dir_name);
+
+        if !model_dir.exists() {
+            return None;
+        }
+
+        // Read the commit hash from refs/main
+        let refs_main = model_dir.join("refs").join("main");
+        let commit_hash = std::fs::read_to_string(&refs_main).ok()?;
+        let commit_hash = commit_hash.trim();
+
+        let snapshot_dir = model_dir.join("snapshots").join(commit_hash);
+
+        // Verify the snapshot directory has the required files
+        if snapshot_dir.join("tokenizer.json").exists()
+            && snapshot_dir.join("model.safetensors").exists()
+        {
+            Some(snapshot_dir)
+        } else {
+            None
+        }
     }
 
     /// Compute the embedding vector for the given text.

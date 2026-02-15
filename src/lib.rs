@@ -81,7 +81,7 @@ pub mod storage;
 pub mod types;
 
 pub use api::Mnemoria;
-pub use constants::{APP_NAME, DEFAULT_MODEL_ID, MODELS_SUBDIR};
+pub use constants::{APP_NAME, DEFAULT_MODEL_ID};
 pub use error::{Error, Result, lock_mutex};
 pub use types::{
     Config, DurabilityMode, EntryType, MemoryEntry, MemoryStats, SearchResult, TimelineOptions,

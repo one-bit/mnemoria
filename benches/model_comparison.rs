@@ -24,7 +24,7 @@
 //! access is available for the initial run.
 
 use mnemoria::embeddings::EmbeddingBackend;
-use mnemoria::{APP_NAME, Config, DurabilityMode, EntryType, MODELS_SUBDIR, Mnemoria};
+use mnemoria::{Config, DurabilityMode, EntryType, Mnemoria};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -461,31 +461,90 @@ const TEST_CASES: &[RetrievalTestCase] = &[
 /// Files required by model2vec to load a model from disk.
 const MODEL_FILES: &[&str] = &["tokenizer.json", "model.safetensors", "config.json"];
 
-/// Return the local cache path for a given HuggingFace model ID.
-fn model_cache_path(model_id: &str) -> PathBuf {
-    let model_dir_name = model_id.rsplit('/').next().unwrap_or(model_id);
-    dirs::cache_dir()
-        .unwrap_or_else(|| Path::new(".").to_path_buf())
-        .join(APP_NAME)
-        .join(MODELS_SUBDIR)
-        .join(model_dir_name)
+/// Return the HuggingFace hub cache directory, respecting env vars.
+fn hf_hub_cache_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("HF_HUB_CACHE") {
+        PathBuf::from(dir)
+    } else if let Ok(dir) = std::env::var("HUGGINGFACE_HUB_CACHE") {
+        PathBuf::from(dir)
+    } else if let Ok(hf_home) = std::env::var("HF_HOME") {
+        PathBuf::from(hf_home).join("hub")
+    } else {
+        dirs::cache_dir()
+            .unwrap_or_else(|| Path::new(".").to_path_buf())
+            .join("huggingface")
+            .join("hub")
+    }
 }
 
-/// Check if a model is already downloaded (all required files exist).
+/// Return the HF cache model directory for a given model ID.
+/// e.g. "minishlab/potion-base-8M" -> ".../huggingface/hub/models--minishlab--potion-base-8M"
+fn hf_model_dir(model_id: &str) -> PathBuf {
+    let hf_dir_name = format!("models--{}", model_id.replace('/', "--"));
+    hf_hub_cache_dir().join(hf_dir_name)
+}
+
+/// Check if a model is already downloaded in the HF cache (all required files exist).
 fn is_model_cached(model_id: &str) -> bool {
-    let path = model_cache_path(model_id);
-    MODEL_FILES.iter().all(|f| path.join(f).exists())
+    let model_dir = hf_model_dir(model_id);
+    let refs_main = model_dir.join("refs").join("main");
+
+    let commit_hash = match std::fs::read_to_string(&refs_main) {
+        Ok(h) => h.trim().to_string(),
+        Err(_) => return false,
+    };
+
+    let snapshot_dir = model_dir.join("snapshots").join(&commit_hash);
+    MODEL_FILES.iter().all(|f| snapshot_dir.join(f).exists())
 }
 
-/// Download a model from HuggingFace Hub to the local cache.
-/// Uses the raw file download URLs: https://huggingface.co/{model_id}/resolve/main/{file}
+/// Download a model from HuggingFace Hub into the standard HF cache layout.
+///
+/// This mimics the HuggingFace Hub cache structure:
+///   <hub>/models--<org>--<name>/blobs/<sha256>
+///   <hub>/models--<org>--<name>/snapshots/<commit>/  (symlinks to blobs)
+///   <hub>/models--<org>--<name>/refs/main             (commit hash)
 fn download_model(model_id: &str) {
-    let cache_path = model_cache_path(model_id);
-    std::fs::create_dir_all(&cache_path).expect("failed to create model cache dir");
+    let model_dir = hf_model_dir(model_id);
+    let blobs_dir = model_dir.join("blobs");
+    let refs_dir = model_dir.join("refs");
 
+    std::fs::create_dir_all(&blobs_dir).expect("failed to create blobs dir");
+    std::fs::create_dir_all(&refs_dir).expect("failed to create refs dir");
+
+    // First, resolve the latest commit hash for the main branch.
+    print!("    Resolving latest commit ... ");
+    std::io::stdout().flush().ok();
+
+    let api_url = format!(
+        "https://huggingface.co/api/models/{}/revision/main",
+        model_id
+    );
+    let output = std::process::Command::new("curl")
+        .args(["-sL", &api_url])
+        .output()
+        .expect("failed to run curl");
+
+    let api_response = String::from_utf8_lossy(&output.stdout);
+    // Extract "sha" field from JSON response (simple parse to avoid extra deps)
+    let commit_hash = api_response
+        .split("\"sha\":\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .expect("failed to parse commit hash from HuggingFace API");
+
+    println!("{}", commit_hash);
+
+    let snapshot_dir = model_dir.join("snapshots").join(commit_hash);
+    std::fs::create_dir_all(&snapshot_dir).expect("failed to create snapshot dir");
+
+    // Write refs/main
+    std::fs::write(refs_dir.join("main"), commit_hash).expect("failed to write refs/main");
+
+    // Download each file into blobs/ and symlink from snapshots/
     for file_name in MODEL_FILES {
-        let dest = cache_path.join(file_name);
-        if dest.exists() {
+        let snapshot_file = snapshot_dir.join(file_name);
+        if snapshot_file.exists() {
             continue;
         }
 
@@ -494,11 +553,14 @@ fn download_model(model_id: &str) {
             model_id, file_name
         );
 
+        // Download to a temp file first, then compute hash for blob name
+        let tmp_dest = blobs_dir.join(format!("{}.tmp", file_name));
+
         print!("    Downloading {} ... ", file_name);
         std::io::stdout().flush().ok();
 
         let output = std::process::Command::new("curl")
-            .args(["-sL", "-o", dest.to_str().unwrap(), &url])
+            .args(["-sL", "-o", tmp_dest.to_str().unwrap(), &url])
             .output()
             .expect("failed to run curl");
 
@@ -510,8 +572,31 @@ fn download_model(model_id: &str) {
             );
         }
 
-        // Sanity check: file should be non-empty
-        let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+        let size = std::fs::metadata(&tmp_dest).map(|m| m.len()).unwrap_or(0);
+
+        // Compute SHA256 for the blob filename (matching HF cache convention)
+        let hash_output = std::process::Command::new("sha256sum")
+            .arg(tmp_dest.to_str().unwrap())
+            .output()
+            .expect("failed to run sha256sum");
+        let hash = String::from_utf8_lossy(&hash_output.stdout);
+        let hash = hash.split_whitespace().next().unwrap_or("unknown");
+
+        let blob_path = blobs_dir.join(hash);
+        std::fs::rename(&tmp_dest, &blob_path).expect("failed to rename blob");
+
+        // Create relative symlink from snapshot to blob
+        #[cfg(unix)]
+        {
+            let relative_blob = PathBuf::from("../../blobs").join(hash);
+            std::os::unix::fs::symlink(&relative_blob, &snapshot_file)
+                .expect("failed to create symlink");
+        }
+        #[cfg(not(unix))]
+        {
+            // On non-unix, just copy the file
+            std::fs::copy(&blob_path, &snapshot_file).expect("failed to copy blob");
+        }
 
         println!("done ({:.1} MB)", size as f64 / 1_048_576.0);
     }
