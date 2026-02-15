@@ -1150,9 +1150,9 @@ impl Mnemoria {
         let mut oldest_timestamp = manifest.oldest_timestamp;
         let mut newest_timestamp = manifest.newest_timestamp;
 
-        let w = writer.as_mut().ok_or_else(|| {
-            crate::Error::Io(std::io::Error::other("Log writer not available"))
-        })?;
+        let w = writer
+            .as_mut()
+            .ok_or_else(|| crate::Error::Io(std::io::Error::other("Log writer not available")))?;
 
         for entry in &entries {
             let mut relinked = entry.clone();
