@@ -196,6 +196,32 @@ impl ManifestFingerprint {
     }
 }
 
+/// The main API for interacting with a mnemoria memory store.
+///
+/// `Mnemoria` manages an append-only binary log of [`MemoryEntry`] records,
+/// a BM25 full-text search index (via Tantivy), and optional semantic
+/// embeddings (via model2vec). It supports concurrent access from multiple
+/// processes through advisory file locking and per-process ephemeral indexes.
+///
+/// # Creating vs. opening
+///
+/// Use [`Mnemoria::create`] (or [`Mnemoria::create_with_config`]) to
+/// initialize a new, empty memory store at a given path. Use
+/// [`Mnemoria::open`] (or [`Mnemoria::open_with_config`]) to open an
+/// existing store. Opening performs automatic crash recovery: partial
+/// trailing writes are truncated and the manifest is reconciled with the
+/// log contents.
+///
+/// # Thread safety
+///
+/// All public methods take `&self` and use internal [`Mutex`] locks, so a
+/// single `Mnemoria` instance can be shared across threads (e.g. via
+/// `Arc<Mnemoria>`). Cross-process coordination uses advisory file locks.
+///
+/// # Cleanup
+///
+/// The per-process Tantivy index directory (stored in the OS temp dir) is
+/// automatically removed when the `Mnemoria` instance is dropped.
 pub struct Mnemoria {
     base_path: PathBuf,
     config: Config,
@@ -447,10 +473,29 @@ impl Mnemoria {
         Ok(())
     }
 
+    /// Create a new memory store at `path` with default configuration.
+    ///
+    /// The directory is created if it does not exist. An empty `log.bin` and
+    /// `manifest.json` are written. If a store already exists at `path`, its
+    /// manifest is overwritten (the log is preserved).
+    ///
+    /// This is equivalent to calling
+    /// [`create_with_config`](Self::create_with_config) with
+    /// [`Config::default()`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory cannot be created or the initial
+    /// files cannot be written.
     pub async fn create(path: &Path) -> Result<Self, crate::Error> {
         Self::create_with_config(path, Config::default()).await
     }
 
+    /// Create a new memory store at `path` with the given [`Config`].
+    ///
+    /// See [`create`](Self::create) for details. The `config` parameter
+    /// allows you to set the durability mode, maximum entry count, and
+    /// embedding model.
     pub async fn create_with_config(path: &Path, config: Config) -> Result<Self, crate::Error> {
         std::fs::create_dir_all(path)?;
 
@@ -487,6 +532,19 @@ impl Mnemoria {
         })
     }
 
+    /// Open an existing memory store at `path` with the given [`Config`].
+    ///
+    /// On open, the log is scanned and reconciled with the manifest:
+    ///
+    /// - Partial trailing records (from a crash) are truncated.
+    /// - If the manifest is missing or corrupt, it is rebuilt from the log.
+    /// - The full-text search index is rebuilt from the log entries.
+    /// - Stale ephemeral index directories from crashed processes are cleaned
+    ///   up.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `path` does not exist or the log cannot be read.
     pub async fn open_with_config(path: &Path, config: Config) -> Result<Self, crate::Error> {
         let file_lock = FileLock::new(path)?;
         // Exclusive lock during open: reconciliation may truncate the log and rewrite the manifest.
@@ -526,10 +584,38 @@ impl Mnemoria {
         })
     }
 
+    /// Open an existing memory store at `path` with default configuration.
+    ///
+    /// This is equivalent to calling
+    /// [`open_with_config`](Self::open_with_config) with
+    /// [`Config::default()`].
+    ///
+    /// See [`open_with_config`](Self::open_with_config) for details on
+    /// crash recovery and reconciliation.
     pub async fn open(path: &Path) -> Result<Self, crate::Error> {
         Self::open_with_config(path, Config::default()).await
     }
 
+    /// Store a new memory entry and return its unique ID.
+    ///
+    /// The entry is appended to the binary log, indexed for full-text search,
+    /// and (if the `model2vec` feature is enabled) embedded for semantic
+    /// search. The returned ID is a UUID v4 string that can be used with
+    /// [`get`](Self::get) to retrieve the entry later.
+    ///
+    /// If [`Config::max_entries`] is set and the store exceeds the limit
+    /// after this write, the oldest entries are automatically rotated out.
+    ///
+    /// # Arguments
+    ///
+    /// * `entry_type` — category tag for the memory (e.g. [`EntryType::Discovery`])
+    /// * `summary` — short, human-readable summary
+    /// * `content` — full content of the memory
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the log cannot be written, the index cannot be
+    /// updated, or the embedding model fails.
     pub async fn remember(
         &self,
         entry_type: EntryType,
@@ -690,6 +776,20 @@ impl Mnemoria {
         Ok(())
     }
 
+    /// Search memories using hybrid BM25 + semantic search.
+    ///
+    /// When the `model2vec` feature is enabled, the query is embedded and
+    /// results are ranked using Reciprocal Rank Fusion (RRF) across both
+    /// BM25 keyword scores and cosine similarity scores. When embeddings
+    /// are unavailable, only BM25 keyword search is used.
+    ///
+    /// Results are returned in descending relevance order, limited to at
+    /// most `limit` entries.
+    ///
+    /// # Arguments
+    ///
+    /// * `query` — natural language search query
+    /// * `limit` — maximum number of results to return
     pub async fn search_memory(
         &self,
         query: &str,
@@ -729,6 +829,13 @@ impl Mnemoria {
         Ok(results)
     }
 
+    /// Ask a natural language question and get a formatted text answer.
+    ///
+    /// This is a convenience wrapper around [`search_memory`](Self::search_memory)
+    /// that returns the top 5 results as a human-readable string, with each
+    /// entry's type, summary, and a truncated preview of its content.
+    ///
+    /// Returns `"No relevant memories found."` if no matches are found.
     pub async fn ask_memory(&self, question: &str) -> Result<String, crate::Error> {
         // Note: search_memory acquires its own shared lock, so we don't double-lock here.
         let results = self.search_memory(question, 5).await?;
@@ -756,6 +863,10 @@ impl Mnemoria {
         Ok(response)
     }
 
+    /// Return aggregate statistics about the memory store.
+    ///
+    /// The returned [`MemoryStats`] includes the total entry count, log file
+    /// size in bytes, and the timestamps of the oldest and newest entries.
     pub async fn memory_stats(&self) -> Result<MemoryStats, crate::Error> {
         let _guard = self.file_lock.lock_shared()?;
         self.refresh_if_stale()?;
@@ -773,6 +884,11 @@ impl Mnemoria {
         })
     }
 
+    /// Retrieve entries in chronological order with optional filtering.
+    ///
+    /// Returns entries sorted by timestamp. Use [`TimelineOptions`] to
+    /// control the direction (`reverse`), limit, and time-range filters
+    /// (`since` / `until`).
     pub async fn timeline(
         &self,
         options: TimelineOptions,
@@ -812,6 +928,12 @@ impl Mnemoria {
         Ok(entries)
     }
 
+    /// Validate the CRC32 checksum chain of the binary log.
+    ///
+    /// Reads every entry in the log and verifies that each entry's checksum
+    /// matches its computed value and that each entry's `prev_checksum`
+    /// matches the preceding entry's checksum. Returns `true` if the chain
+    /// is intact, `false` if any entry fails verification.
     pub async fn verify(&self) -> Result<bool, crate::Error> {
         let _guard = self.file_lock.lock_shared()?;
 
@@ -819,6 +941,11 @@ impl Mnemoria {
         log_reader::validate_checksum_chain(&log_path)
     }
 
+    /// Drop and rebuild the full-text search index from the in-memory cache.
+    ///
+    /// This is useful if the index has become inconsistent (e.g. after a
+    /// crash during a batch write). The index is rebuilt from the cached
+    /// entries, so no disk I/O on the log file is required.
     pub async fn rebuild_index(&self) -> Result<(), crate::Error> {
         let _guard = self.file_lock.lock_exclusive()?;
         self.refresh_if_stale()?;
@@ -837,6 +964,10 @@ impl Mnemoria {
         Ok(())
     }
 
+    /// Retrieve a single memory entry by its UUID string.
+    ///
+    /// Returns `Ok(None)` if no entry with the given ID exists.
+    /// Lookups are O(1) via an in-memory hash map.
     pub async fn get(&self, id: &str) -> Result<Option<MemoryEntry>, crate::Error> {
         let _guard = self.file_lock.lock_shared()?;
         self.refresh_if_stale()?;
@@ -845,6 +976,15 @@ impl Mnemoria {
         Ok(cache.by_id.get(id).cloned())
     }
 
+    /// Remove entries with invalid checksums and rewrite the log atomically.
+    ///
+    /// Each entry's checksum is recomputed and compared to the stored value.
+    /// Entries that fail verification are discarded. The remaining entries
+    /// are re-linked into a new checksum chain and written to a temporary
+    /// file, which is then atomically renamed over the original log.
+    ///
+    /// The manifest, index, and in-memory cache are all updated to reflect
+    /// the compacted state.
     pub async fn compact(&self) -> Result<(), crate::Error> {
         let _guard = self.file_lock.lock_exclusive()?;
         self.refresh_if_stale()?;
@@ -898,6 +1038,11 @@ impl Mnemoria {
         Ok(())
     }
 
+    /// Export all memory entries to a JSON file.
+    ///
+    /// Writes a pretty-printed JSON array of all [`MemoryEntry`] records to
+    /// the given `path`. The exported file can later be imported into
+    /// another store via [`import`](Self::import).
     pub async fn export(&self, path: &Path) -> Result<(), crate::Error> {
         let _guard = self.file_lock.lock_shared()?;
 
@@ -911,6 +1056,14 @@ impl Mnemoria {
         Ok(())
     }
 
+    /// Import memory entries from a JSON file.
+    ///
+    /// Reads a JSON array of [`MemoryEntry`] records from `path` and appends
+    /// them to this store. Each imported entry is re-linked into the current
+    /// checksum chain (its `prev_checksum` and `checksum` fields are
+    /// recomputed). Returns the number of entries imported.
+    ///
+    /// The JSON format is the same as produced by [`export`](Self::export).
     pub async fn import(&self, path: &Path) -> Result<u64, crate::Error> {
         let _guard = self.file_lock.lock_exclusive()?;
         self.refresh_if_stale()?;

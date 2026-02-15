@@ -1,3 +1,10 @@
+/// Backend for computing text embeddings using model2vec.
+///
+/// Wraps an optional [`model2vec::Model2Vec`] model. When the `model2vec`
+/// feature is disabled or the model fails to load, the backend gracefully
+/// degrades — [`is_available`](Self::is_available) returns `false` and
+/// [`embed`](Self::embed) returns an error. This allows the rest of the
+/// system to fall back to BM25-only search.
 pub struct EmbeddingBackend {
     model: Option<model2vec::Model2Vec>,
 }
@@ -62,6 +69,15 @@ impl EmbeddingBackend {
             .map_err(|e: anyhow::Error| crate::Error::Embedding(e.to_string()))
     }
 
+    /// Compute the embedding vector for the given text.
+    ///
+    /// Returns a `Vec<f32>` whose dimensionality depends on the loaded model
+    /// (256 for the default `potion-base-8M`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Embedding`](crate::Error::Embedding) if the model is
+    /// not loaded or inference fails.
     pub fn embed(&self, text: &str) -> Result<Vec<f32>, crate::Error> {
         #[cfg(feature = "model2vec")]
         {
@@ -86,6 +102,7 @@ impl EmbeddingBackend {
         }
     }
 
+    /// Returns `true` if the embedding model is loaded and ready.
     pub fn is_available(&self) -> bool {
         self.model.is_some()
     }

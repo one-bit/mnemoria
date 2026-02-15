@@ -19,6 +19,12 @@ const FIELD_CONTENT: &str = "content";
 const FIELD_ENTRY_TYPE: &str = "entry_type";
 const FIELD_TIMESTAMP: &str = "timestamp";
 
+/// Manages a Tantivy full-text search index with an in-memory vector store
+/// for hybrid BM25 + semantic search.
+///
+/// Each `IndexManager` owns an exclusive Tantivy [`IndexWriter`], so every
+/// process must use its own index directory. The index is ephemeral and
+/// rebuilt from the binary log on each [`Mnemoria::open`](crate::Mnemoria::open).
 pub struct IndexManager {
     index: Index,
     reader: IndexReader,

@@ -1,3 +1,77 @@
+//! # Mnemoria
+//!
+//! Persistent, git-friendly memory storage for AI agents with hybrid
+//! semantic + full-text search.
+//!
+//! Mnemoria provides a single-file, append-only memory store that AI assistants
+//! (Claude, GPT, Cursor, or any LLM-based tool) can use to remember information
+//! across conversations and sessions. Memories are stored in a binary log with
+//! CRC32 checksum chaining for corruption detection and crash recovery.
+//!
+//! ## Key features
+//!
+//! - **Hybrid search** — combines BM25 full-text search (via [Tantivy]) with
+//!   semantic vector search (via [model2vec]) using Reciprocal Rank Fusion.
+//! - **Git-friendly** — the append-only binary format produces clean diffs and
+//!   merges well in version control.
+//! - **Corruption-resistant** — CRC32 checksum chain with automatic crash
+//!   recovery and log truncation on open.
+//! - **Multi-process safe** — advisory file locking and per-process ephemeral
+//!   search indexes allow concurrent readers and writers.
+//!
+//! [Tantivy]: https://docs.rs/tantivy
+//! [model2vec]: https://docs.rs/model2vec
+//!
+//! ## Quick start
+//!
+//! ```rust,no_run
+//! use mnemoria::{Mnemoria, EntryType};
+//! use std::path::Path;
+//!
+//! # async fn example() -> Result<(), mnemoria::Error> {
+//! // Create a new memory store
+//! let memory = Mnemoria::create(Path::new("./my-memories")).await?;
+//!
+//! // Store a memory
+//! let id = memory.remember(
+//!     EntryType::Discovery,
+//!     "Rust async patterns",
+//!     "Use tokio::spawn for CPU-bound work inside async contexts",
+//! ).await?;
+//!
+//! // Search by meaning
+//! let results = memory.search_memory("async concurrency", 5).await?;
+//! for result in &results {
+//!     println!("[{}] {} (score: {:.3})", result.entry.entry_type, result.entry.summary, result.score);
+//! }
+//!
+//! // Retrieve by ID
+//! let entry = memory.get(&id).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Storage format
+//!
+//! A memory store is a directory containing:
+//!
+//! | File              | Purpose                          |
+//! |-------------------|----------------------------------|
+//! | `log.bin`         | Append-only binary log (rkyv)    |
+//! | `manifest.json`   | Metadata and checksum state      |
+//! | `mnemoria.lock`   | Advisory file lock               |
+//!
+//! The search index is ephemeral — rebuilt from `log.bin` on each open — and
+//! is stored in the OS temp directory, not in the memory store itself.
+//!
+//! ## Feature flags
+//!
+//! | Flag       | Default | Description                                    |
+//! |------------|---------|------------------------------------------------|
+//! | `model2vec` | **yes** | Enables semantic embeddings via model2vec.    |
+//!
+//! Without `model2vec`, only BM25 keyword search is available.
+
 pub mod api;
 pub mod constants;
 pub mod embeddings;
