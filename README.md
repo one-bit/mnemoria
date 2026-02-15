@@ -2,8 +2,20 @@
 
 [![CI](https://github.com/one-bit/mnemoria/actions/workflows/ci.yml/badge.svg)](https://github.com/one-bit/mnemoria/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/mnemoria.svg)](https://crates.io/crates/mnemoria)
+[![Sponsor](https://img.shields.io/badge/Sponsor-GitHub%20Sponsors-181717?logo=githubsponsors)](https://github.com/sponsors/one-bit)
 
 Mnemoria is a **memory storage system for AI agents**. It provides persistent, searchable memory that AI assistants can use to remember information across conversations and sessions. Perfect for Claude, GPT, Cursor, or any AI tool that needs long-term context.
+
+## Support this project
+
+If this project has been helpful to you, you are welcome to sponsor it.
+Sponsorship helps me spend more time maintaining it, fixing bugs, and
+building new features.
+
+No pressure at all - starring the repo, sharing it, or giving feedback also
+means a lot.
+
+[Become a sponsor](https://github.com/sponsors/one-bit)
 
 ## Features
 
