@@ -273,7 +273,7 @@ pub enum DurabilityMode {
 ///
 /// Controls durability, entry rotation, and the embedding model. The
 /// default configuration uses [`DurabilityMode::Fsync`], no entry limit,
-/// and the `"minishlab/potion-base-8M"` embedding model.
+/// and the `"minishlab/potion-base-32M"` embedding model.
 #[derive(Debug, Clone, SerdeSerialize, SerdeDeserialize)]
 pub struct Config {
     /// Maximum number of entries to keep. When the store reaches this count,
@@ -283,8 +283,8 @@ pub struct Config {
     /// Controls write durability. See [`DurabilityMode`] for details.
     pub durability: DurabilityMode,
     /// HuggingFace model ID for the model2vec embedding model.
-    /// Defaults to `"minishlab/potion-base-8M"`. Any model2vec-compatible
-    /// model can be used (e.g. `"minishlab/potion-base-32M"`,
+    /// Defaults to `"minishlab/potion-base-32M"`. Any model2vec-compatible
+    /// model can be used (e.g. `"minishlab/potion-base-8M"`,
     /// `"minishlab/potion-retrieval-32M"`).
     pub model_id: String,
 }

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "mnemoria")]
+#[command(version)]
 #[command(about = "A git-friendly memory storage CLI for AI agents")]
 struct Cli {
     #[command(subcommand)]

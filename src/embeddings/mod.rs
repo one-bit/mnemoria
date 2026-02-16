@@ -13,7 +13,7 @@ impl EmbeddingBackend {
     /// Create a new embedding backend using the given HuggingFace model ID.
     ///
     /// The `model_id` should be a HuggingFace model identifier such as
-    /// `"minishlab/potion-base-8M"` or `"minishlab/potion-base-32M"`.
+    /// `"minishlab/potion-base-32M"` or `"minishlab/potion-base-8M"`.
     /// Any model2vec-compatible model can be used.
     pub fn new(model_id: &str) -> Self {
         #[cfg(feature = "model2vec")]
@@ -126,7 +126,7 @@ impl EmbeddingBackend {
     /// Compute the embedding vector for the given text.
     ///
     /// Returns a `Vec<f32>` whose dimensionality depends on the loaded model
-    /// (256 for the default `potion-base-8M`).
+    /// (512 for the default `potion-base-32M`).
     ///
     /// # Errors
     ///

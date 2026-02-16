@@ -31,7 +31,7 @@ means a lot.
 ### Prerequisites
 
 - [Rust](https://rustup.rs/) (stable toolchain)
-- ~30MB for embedding model (downloaded on first use)
+- ~130MB for embedding model (downloaded on first use)
 
 ### Build from Source
 
@@ -141,10 +141,9 @@ The search index is rebuilt on each open and is not stored in git.
 
 - **Storage**: rkyv binary serialization (zero-copy)
 - **Full-Text**: Tantivy (BM25)
-- **Embeddings**: model2vec (256-dim, CPU-only)
+- **Embeddings**: model2vec (512-dim, CPU-only)
 - **Similarity**: simsimd (SIMD-accelerated)
 
-See `ARCHITECTURE.md` and `PRD.md` for detailed design.
 
 ## Performance
 
