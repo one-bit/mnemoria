@@ -9,6 +9,7 @@ repository = "https://github.com/one-bit/mnemoria"
 homepage = "https://github.com/one-bit/mnemoria"
 documentation = "https://docs.rs/mnemoria"
 readme = "README.md"
+exclude = ["opencode.json"]
 keywords = ["ai", "agents", "memory", "llm", "semantic-search"]
 categories = ["database-implementations", "text-processing", "command-line-utilities"]
 
