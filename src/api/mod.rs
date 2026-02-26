@@ -6,7 +6,6 @@ use crate::storage::log_reader;
 use crate::storage::{LogWriter, Manifest};
 use crate::types::{Config, EntryType, MemoryEntry, MemoryStats, SearchResult, TimelineOptions};
 use std::collections::HashMap;
-use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -393,8 +392,15 @@ impl Mnemoria {
 
         std::fs::rename(&temp_path, &log_path)?;
 
-        let dir_file = OpenOptions::new().read(true).open(&self.base_path)?;
-        dir_file.sync_all()?;
+        // On Unix, fsync the parent directory to ensure the rename is durable.
+        // Windows does not support fsyncing directories and NTFS doesn't need it.
+        #[cfg(unix)]
+        {
+            let dir_file = std::fs::OpenOptions::new()
+                .read(true)
+                .open(&self.base_path)?;
+            dir_file.sync_all()?;
+        }
 
         let mut writer = lock_mutex(&self.writer)?;
         *writer = Some(LogWriter::with_durability(

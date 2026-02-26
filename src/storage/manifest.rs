@@ -84,8 +84,15 @@ impl Manifest {
 
         std::fs::rename(&temp_path, &path)?;
 
-        let dir_file = OpenOptions::new().read(true).open(base_path)?;
-        dir_file.sync_all()?;
+        // On Unix, fsync the parent directory to ensure the rename is durable.
+        // Windows does not support fsyncing directories (returns ACCESS_DENIED)
+        // and NTFS guarantees rename durability without it.
+        #[cfg(unix)]
+        {
+            let dir_file = OpenOptions::new().read(true).open(base_path)?;
+            dir_file.sync_all()?;
+        }
+
         Ok(())
     }
 }
