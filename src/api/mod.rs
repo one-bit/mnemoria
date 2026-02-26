@@ -129,7 +129,7 @@ fn is_process_alive(pid: u32) -> bool {
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
     const STILL_ACTIVE: u32 = 259;
 
-    extern "system" {
+    unsafe extern "system" {
         fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut core::ffi::c_void;
         fn CloseHandle(handle: *mut core::ffi::c_void) -> i32;
         fn GetExitCodeProcess(handle: *mut core::ffi::c_void, code: *mut u32) -> i32;
