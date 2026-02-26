@@ -120,7 +120,7 @@ fn is_process_alive(pid: u32) -> bool {
             return true;
         }
         // EPERM means the process exists but we can't signal it — still alive.
-        *libc::__errno_location() == libc::EPERM
+        std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
 }
 
