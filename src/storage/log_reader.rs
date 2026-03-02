@@ -4,10 +4,18 @@ use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::path::Path;
 
+/// Result of scanning the binary log for recoverable entries.
+///
+/// Returned by [`scan_recoverable_prefix`]. If `valid_bytes < total_bytes`,
+/// the log contains trailing bytes that could not be decoded (partial write
+/// from a crash) and should be truncated.
 #[derive(Debug)]
 pub struct RecoveryScan {
+    /// All entries that were successfully decoded and checksum-verified.
     pub entries: Vec<MemoryEntry>,
+    /// Byte offset of the end of the last valid record.
     pub valid_bytes: u64,
+    /// Total size of the log file in bytes.
     pub total_bytes: u64,
 }
 
@@ -65,6 +73,11 @@ pub fn read_all(path: &Path) -> Result<Vec<MemoryEntry>, crate::Error> {
     Ok(entries)
 }
 
+/// Validate the CRC32 checksum chain of the log at `path`.
+///
+/// Returns `true` if every entry's checksum matches its computed value and
+/// each entry's `prev_checksum` matches the preceding entry's checksum.
+/// Returns `false` on the first mismatch.
 pub fn validate_checksum_chain(path: &Path) -> Result<bool, crate::Error> {
     let entries = read_all(path)?;
 
@@ -95,6 +108,11 @@ pub fn validate_checksum_chain(path: &Path) -> Result<bool, crate::Error> {
     Ok(true)
 }
 
+/// Scan the log and return the longest prefix of checksum-verified entries.
+///
+/// Unlike [`read_all`], this function also verifies the checksum chain
+/// during scanning. It is used during [`Mnemoria::open`](crate::Mnemoria::open)
+/// to detect and truncate partial trailing writes from a crash.
 pub fn scan_recoverable_prefix(path: &Path) -> Result<RecoveryScan, crate::Error> {
     let mut file = match File::open(path) {
         Ok(f) => f,
@@ -175,6 +193,7 @@ pub fn scan_recoverable_prefix(path: &Path) -> Result<RecoveryScan, crate::Error
     })
 }
 
+/// Truncate the file at `path` to exactly `size` bytes and fsync.
 pub fn truncate_to(path: &Path, size: u64) -> Result<(), crate::Error> {
     let file = OpenOptions::new().write(true).open(path)?;
     file.set_len(size)?;
@@ -182,6 +201,7 @@ pub fn truncate_to(path: &Path, size: u64) -> Result<(), crate::Error> {
     Ok(())
 }
 
+/// Return the size of the file at `path` in bytes.
 pub fn file_size(path: &Path) -> Result<u64, crate::Error> {
     let metadata = std::fs::metadata(path)?;
     Ok(metadata.len())

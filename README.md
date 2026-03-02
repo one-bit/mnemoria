@@ -2,9 +2,42 @@
 
 [![CI](https://github.com/one-bit/mnemoria/actions/workflows/ci.yml/badge.svg)](https://github.com/one-bit/mnemoria/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/mnemoria.svg)](https://crates.io/crates/mnemoria)
+[![docs.rs](https://docs.rs/mnemoria/badge.svg)](https://docs.rs/mnemoria)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/Sponsor-GitHub%20Sponsors-181717?logo=githubsponsors)](https://github.com/sponsors/one-bit)
 
 Mnemoria is a **memory storage system for AI agents**. It provides persistent, searchable memory that AI assistants can use to remember information across conversations and sessions. Perfect for Claude, GPT, Cursor, or any AI tool that needs long-term context.
+
+## Library Usage
+
+```rust
+use mnemoria::{Mnemoria, EntryType};
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> Result<(), mnemoria::Error> {
+    // Create a new memory store
+    let memory = Mnemoria::create(Path::new("./my-memories")).await?;
+
+    // Store a memory
+    let id = memory.remember(
+        "my-agent",
+        EntryType::Discovery,
+        "Rust async patterns",
+        "Use tokio::spawn for CPU-bound work inside async contexts",
+    ).await?;
+
+    // Search by meaning (hybrid BM25 + semantic)
+    let results = memory.search_memory("async concurrency", 5, None).await?;
+    for result in &results {
+        println!("[{}] {} (score: {:.3})", result.entry.entry_type, result.entry.summary, result.score);
+    }
+
+    // Retrieve by ID
+    let entry = memory.get(&id).await?;
+    Ok(())
+}
+```
 
 ## Support this project
 

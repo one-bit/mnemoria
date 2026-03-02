@@ -30,6 +30,9 @@ impl Drop for FileLockGuard {
 }
 
 impl FileLock {
+    /// Create a new file lock rooted at the given store directory.
+    ///
+    /// The lock file (`mnemoria.lock`) is created if it does not exist.
     pub fn new(base_path: &Path) -> Result<Self, crate::Error> {
         let lock_path = base_path.join(LOCK_FILENAME);
 

@@ -47,6 +47,10 @@ impl IndexManager {
         self.writer = None;
     }
 
+    /// Create a new index at the given directory path.
+    ///
+    /// If the directory already contains a Tantivy index it is opened;
+    /// otherwise a fresh index with the mnemoria schema is created.
     pub fn new(index_path: &Path) -> Result<Self, crate::Error> {
         let mut schema_builder = Schema::builder();
         schema_builder.add_text_field(FIELD_ID, STRING | STORED);
@@ -99,6 +103,11 @@ impl IndexManager {
         })
     }
 
+    /// Add a single memory entry to the Tantivy index and vector store.
+    ///
+    /// The document is staged in the writer but not committed until
+    /// [`commit`](Self::commit) is called (or the batch threshold is
+    /// reached in [`Mnemoria::remember`](crate::Mnemoria::remember)).
     pub fn add_entry(&mut self, entry: &MemoryEntry) -> Result<(), crate::Error> {
         let writer = self.writer.as_mut().ok_or_else(|| {
             crate::Error::Search(TantivyError::SystemError(
@@ -124,6 +133,7 @@ impl IndexManager {
         Ok(())
     }
 
+    /// Commit all staged documents and reload the index reader.
     pub fn commit(&mut self) -> Result<(), crate::Error> {
         if let Some(writer) = self.writer.as_mut() {
             writer.commit()?;
@@ -132,6 +142,11 @@ impl IndexManager {
         Ok(())
     }
 
+    /// Perform a BM25-only keyword search.
+    ///
+    /// Returns up to `limit` `(id, score)` pairs sorted by descending BM25
+    /// relevance. The query is parsed leniently so special characters do not
+    /// cause hard errors.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<(String, f32)>, crate::Error> {
         let searcher = self.reader.searcher();
 
@@ -158,6 +173,14 @@ impl IndexManager {
         Ok(results)
     }
 
+    /// Perform a hybrid BM25 + semantic search using Reciprocal Rank Fusion.
+    ///
+    /// When `query_embedding` is `Some`, cosine similarity scores are
+    /// computed against all stored vectors and combined with BM25 results
+    /// via RRF (k=60). When `None`, falls back to BM25-only search.
+    ///
+    /// Returns up to `limit` `(id, rrf_score)` pairs sorted by descending
+    /// fused relevance.
     pub fn hybrid_search(
         &self,
         query: &str,
@@ -209,6 +232,10 @@ impl IndexManager {
         }
     }
 
+    /// Delete all documents and rebuild the index from the given entries.
+    ///
+    /// This is called during [`Mnemoria::open`](crate::Mnemoria::open) and
+    /// [`Mnemoria::rebuild_index`](crate::Mnemoria::rebuild_index).
     pub fn rebuild_from_entries(&mut self, entries: &[MemoryEntry]) -> Result<(), crate::Error> {
         if let Some(writer) = self.writer.as_mut() {
             writer.delete_all_documents()?;
@@ -224,6 +251,7 @@ impl IndexManager {
         self.commit()
     }
 
+    /// Delete all documents from the index and clear the vector store.
     pub fn clear(&mut self) -> Result<(), crate::Error> {
         if let Some(writer) = self.writer.as_mut() {
             writer.delete_all_documents()?;

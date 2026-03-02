@@ -1,6 +1,6 @@
 [package]
 name = "mnemoria"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2024"
 rust-version = "1.89"
 description = "Persistent, git-friendly memory storage for AI agents with hybrid semantic + full-text search"
@@ -11,8 +11,8 @@ homepage = "https://github.com/one-bit/mnemoria"
 documentation = "https://docs.rs/mnemoria"
 readme = "README.md"
 exclude = ["opencode.json"]
-keywords = ["ai", "agents", "memory", "llm", "semantic-search"]
-categories = ["database-implementations", "text-processing", "command-line-utilities"]
+keywords = ["ai", "agents", "memory", "semantic-search", "embeddings"]
+categories = ["database-implementations", "text-processing", "command-line-utilities", "science::machine-learning", "data-structures"]
 
 [features]
 default = ["model2vec"]

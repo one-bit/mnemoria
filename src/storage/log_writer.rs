@@ -4,22 +4,36 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
+/// Append-only writer for the binary memory log.
+///
+/// Each entry is written as a length-prefixed rkyv-serialized record. The
+/// writer supports configurable [`DurabilityMode`] to balance throughput
+/// and crash safety.
 pub struct LogWriter {
     file: File,
     durability: DurabilityMode,
 }
 
 impl LogWriter {
+    /// Open (or create) the log file at `path` with the default
+    /// [`DurabilityMode::Fsync`].
     pub fn new(path: &Path) -> Result<Self, crate::Error> {
         Self::with_durability(path, DurabilityMode::Fsync)
     }
 
+    /// Open (or create) the log file at `path` with the specified durability mode.
     pub fn with_durability(path: &Path, durability: DurabilityMode) -> Result<Self, crate::Error> {
         let file = OpenOptions::new().create(true).append(true).open(path)?;
 
         Ok(Self { file, durability })
     }
 
+    /// Serialize and append a single entry to the log.
+    ///
+    /// The entry is written as a 4-byte little-endian length prefix followed
+    /// by the rkyv-serialized payload. The write is a single `write_all`
+    /// syscall to prevent interleaving. Durability guarantees depend on the
+    /// configured [`DurabilityMode`].
     pub fn append(&mut self, entry: &MemoryEntry) -> Result<(), crate::Error> {
         let encoded = rkyv::to_bytes::<Error>(entry)
             .map_err(|e: Error| crate::Error::Serialization(e.to_string()))?;
@@ -48,6 +62,7 @@ impl LogWriter {
         Ok(())
     }
 
+    /// Flush the writer's internal buffer to the OS.
     pub fn flush(&mut self) -> Result<(), crate::Error> {
         self.file.flush()?;
         Ok(())
