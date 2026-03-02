@@ -12,7 +12,7 @@ documentation = "https://docs.rs/mnemoria"
 readme = "README.md"
 exclude = ["opencode.json"]
 keywords = ["ai", "agents", "memory", "semantic-search", "embeddings"]
-categories = ["database-implementations", "text-processing", "command-line-utilities", "science::machine-learning", "data-structures"]
+categories = ["database-implementations", "text-processing", "command-line-utilities", "artificial-intelligence", "data-structures"]
 
 [features]
 default = ["model2vec"]
