@@ -85,12 +85,15 @@ pub use api::Mnemoria;
 pub use constants::{APP_NAME, DEFAULT_MODEL_ID};
 pub use error::{Error, Result, lock_mutex};
 pub use types::{
-    Config, DurabilityMode, EntryType, MemoryEntry, MemoryStats, SearchResult, TimelineOptions,
+    AskOptions, CompactOptions, CompactReport, Config, ConsolidateReport, DurabilityMode,
+    EntryType, MemoryEntry, MemoryStats, SearchResult, TimelineOptions,
 };
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, DurabilityMode, EntryType, Mnemoria, TimelineOptions};
+    use super::{
+        AskOptions, CompactOptions, Config, DurabilityMode, EntryType, Mnemoria, TimelineOptions,
+    };
     use crate::storage::{LogWriter, Manifest};
     use crate::types::MemoryEntry;
     use std::fs::OpenOptions;
@@ -851,5 +854,446 @@ mod tests {
         let stats = memory.memory_stats().await.unwrap();
         assert_eq!(stats.total_entries, 10);
         assert!(memory.verify().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_search_hides_superseded_entries_and_tombstones() {
+        let temp_dir = create_temp_dir();
+        let path = PathBuf::from(temp_dir.path());
+
+        let memory = Mnemoria::create(&path).await.unwrap();
+
+        let id_a = memory
+            .remember(
+                "test-agent",
+                EntryType::Discovery,
+                "Zephyr database tuning notes",
+                "The zephyr database needs connection pool tuning for throughput",
+            )
+            .await
+            .unwrap();
+
+        let id_b = memory
+            .remember(
+                "test-agent",
+                EntryType::Discovery,
+                "Zephyr deployment checklist",
+                "The zephyr deployment checklist covers rollout steps",
+            )
+            .await
+            .unwrap();
+
+        // Tombstone supersedes entry A (em dash separator, as produced by forget).
+        memory
+            .remember(
+                "test-agent",
+                EntryType::Discovery,
+                &format!("SUPERSEDES {id_a} — replaced by newer tuning notes"),
+                "obsolete",
+            )
+            .await
+            .unwrap();
+
+        let results = memory.search_memory("zephyr", 10, None).await.unwrap();
+
+        let ids: Vec<&str> = results.iter().map(|r| r.id.as_str()).collect();
+        assert!(
+            ids.contains(&id_b.as_str()),
+            "live entry must remain visible"
+        );
+        assert!(
+            !ids.contains(&id_a.as_str()),
+            "superseded entry must be hidden"
+        );
+        for r in &results {
+            assert!(
+                !r.entry.summary.starts_with("SUPERSEDES "),
+                "tombstone must not appear in results"
+            );
+        }
+
+        // ask_memory inherits the filter since it delegates to search_memory.
+        let answer = memory.ask_memory("zephyr", None).await.unwrap();
+        assert!(answer.contains("deployment checklist"));
+        assert!(!answer.contains("connection pool"));
+    }
+
+    #[tokio::test]
+    async fn test_compact_prune_superseded() {
+        let temp_dir = create_temp_dir();
+        let path = PathBuf::from(temp_dir.path());
+
+        let memory = Mnemoria::create(&path).await.unwrap();
+
+        let id_a = memory
+            .remember(
+                "test-agent",
+                EntryType::Discovery,
+                "Quasar cache eviction policy",
+                "The quasar cache evicts by LRU",
+            )
+            .await
+            .unwrap();
+        let id_b = memory
+            .remember(
+                "test-agent",
+                EntryType::Discovery,
+                "Quasar cache eviction v2",
+                "The quasar cache now evicts by LFU",
+            )
+            .await
+            .unwrap();
+
+        // Tombstone supersedes entry A.
+        memory
+            .remember(
+                "test-agent",
+                EntryType::Discovery,
+                &format!("SUPERSEDES {id_a} — replaced by v2 policy"),
+                "obsolete",
+            )
+            .await
+            .unwrap();
+
+        // Default compact keeps everything (byte-compatible behavior).
+        let report = memory
+            .compact_with_options(CompactOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(report.entries_before, 3);
+        assert_eq!(report.entries_after, 3);
+        assert_eq!(report.pruned_superseded, 0);
+
+        // Pruning removes the superseded entry and its tombstone.
+        let report = memory
+            .compact_with_options(CompactOptions {
+                prune_superseded: true,
+            })
+            .await
+            .unwrap();
+        assert_eq!(report.entries_before, 3);
+        assert_eq!(report.entries_after, 1);
+        assert_eq!(report.pruned_superseded, 2);
+
+        // Only the live entry survives, and the chain still verifies.
+        assert!(memory.verify().await.unwrap());
+        assert!(memory.get(&id_b).await.unwrap().is_some());
+        assert!(memory.get(&id_a).await.unwrap().is_none());
+
+        // A fresh instance reading the rewritten log sees the same state.
+        drop(memory);
+        let reopened = Mnemoria::open(&path).await.unwrap();
+        let stats = reopened.memory_stats().await.unwrap();
+        assert_eq!(stats.total_entries, 1);
+        assert!(reopened.verify().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_search_recency_ranks_newer_entries_first() {
+        let temp_dir = create_temp_dir();
+        let path = PathBuf::from(temp_dir.path());
+
+        let memory = Mnemoria::create(&path).await.unwrap();
+
+        // Two entries with identical indexed text (so identical raw BM25
+        // scores) but very different ages. import() preserves timestamps,
+        // giving precise control over recency.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let old_ms = now_ms - 365 * 86_400_000; // one year ago
+
+        let entries = serde_json::json!([
+            {
+                "id": "11111111-1111-4111-8111-111111111111",
+                "agent_name": "test-agent",
+                "entry_type": "discovery",
+                "summary": "Nebula retry backoff policy",
+                "content": "The nebula client retries with exponential backoff",
+                "embedding": null,
+                "timestamp": old_ms,
+                "checksum": 0,
+                "prev_checksum": 0
+            },
+            {
+                "id": "22222222-2222-4222-8222-222222222222",
+                "agent_name": "test-agent",
+                "entry_type": "discovery",
+                "summary": "Nebula retry backoff policy",
+                "content": "The nebula client retries with exponential backoff",
+                "embedding": null,
+                "timestamp": now_ms,
+                "checksum": 0,
+                "prev_checksum": 0
+            }
+        ]);
+        let import_path = path.join("import.json");
+        std::fs::write(&import_path, entries.to_string()).unwrap();
+        let imported = memory.import(&import_path).await.unwrap();
+        assert_eq!(imported, 2);
+
+        // Identical raw scores mean the recency factor decides the order:
+        // the fresh entry must outrank the year-old one, and both must
+        // survive the relative score floor.
+        let results = memory
+            .search_memory("nebula backoff", 10, None)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].id, "22222222-2222-4222-8222-222222222222");
+        assert_eq!(results[1].id, "11111111-1111-4111-8111-111111111111");
+        assert!(results[0].score > results[1].score);
+        assert!(results[1].score > 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_ask_memory_content_truncation_options() {
+        let temp_dir = create_temp_dir();
+        let path = PathBuf::from(temp_dir.path());
+
+        let memory = Mnemoria::create(&path).await.unwrap();
+
+        // Content well over the 200-byte default preview.
+        let long_content = format!("Comet pipeline detail: {}", "x".repeat(500));
+        memory
+            .remember(
+                "test-agent",
+                EntryType::Discovery,
+                "Comet pipeline detail",
+                &long_content,
+            )
+            .await
+            .unwrap();
+
+        // Default: truncated preview with ellipsis.
+        let default_answer = memory.ask_memory("comet pipeline", None).await.unwrap();
+        assert!(default_answer.contains("..."));
+        assert!(!default_answer.contains(&"x".repeat(500)));
+
+        // content_chars = 0: full content, no ellipsis.
+        let full_answer = memory
+            .ask_memory_with_options("comet pipeline", None, AskOptions { content_chars: 0 })
+            .await
+            .unwrap();
+        assert!(full_answer.contains(&"x".repeat(500)));
+        assert!(!full_answer.contains("..."));
+    }
+
+    #[tokio::test]
+    async fn test_mark_used_boosts_ranking_and_persists() {
+        let temp_dir = create_temp_dir();
+        let path = PathBuf::from(temp_dir.path());
+
+        let memory = Mnemoria::create(&path).await.unwrap();
+
+        // Two entries with identical text so raw scores tie; only the
+        // usage boost can separate them.
+        let id_a = memory
+            .remember(
+                "test-agent",
+                EntryType::Discovery,
+                "Orion cache policy",
+                "The orion cache evicts least-recently-used pages first.",
+            )
+            .await
+            .unwrap();
+        let id_b = memory
+            .remember(
+                "test-agent",
+                EntryType::Discovery,
+                "Orion cache policy",
+                "The orion cache evicts least-recently-used pages first.",
+            )
+            .await
+            .unwrap();
+
+        // Mark entry B useful three times (also exercises prefix resolution).
+        let prefix = &id_b[..8];
+        for _ in 0..3 {
+            let (resolved, count) = memory.mark_used(prefix).await.unwrap();
+            assert_eq!(resolved, id_b);
+            assert!(count >= 1);
+        }
+
+        // Unknown id is rejected.
+        assert!(memory.mark_used("no-such-id").await.is_err());
+
+        // Usage events persist to the sidecar and reload on reopen.
+        drop(memory);
+        let reopened = Mnemoria::open(&path).await.unwrap();
+        let results = reopened
+            .search_memory("orion cache eviction", 10, None)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].id, id_b);
+        assert_eq!(results[1].id, id_a);
+        assert!(results[0].score > results[1].score);
+    }
+
+    #[tokio::test]
+    async fn test_entity_index_finds_paths_and_identifiers() {
+        let temp_dir = create_temp_dir();
+        let path = PathBuf::from(temp_dir.path());
+
+        let memory = Mnemoria::create(&path).await.unwrap();
+
+        memory
+            .remember(
+                "test-agent",
+                EntryType::Discovery,
+                "Config location",
+                "The main config lives at E:/Anti-Gravity/opencode.json and uses the serde_json crate.",
+            )
+            .await
+            .unwrap();
+
+        memory
+            .remember(
+                "test-agent",
+                EntryType::Warning,
+                "Unrelated entry",
+                "Nothing to see here.",
+            )
+            .await
+            .unwrap();
+
+        // Exact path lookup.
+        let hits = memory
+            .find_entities("E:/Anti-Gravity/opencode.json", 10)
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].summary, "Config location");
+
+        // Case-insensitive identifier lookup.
+        let hits = memory.find_entities("SERDE_JSON", 10).await.unwrap();
+        assert_eq!(hits.len(), 1);
+
+        // Prefix lookup.
+        let hits = memory.find_entities("opencode", 10).await.unwrap();
+        assert_eq!(hits.len(), 1);
+
+        // No match.
+        let hits = memory.find_entities("nonexistent-thing", 10).await.unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_by_id_or_prefix() {
+        let temp_dir = create_temp_dir();
+        let path = PathBuf::from(temp_dir.path());
+        let memory = Mnemoria::create(&path).await.unwrap();
+        let id = memory
+            .remember(
+                "test-agent",
+                EntryType::Discovery,
+                "Prefix lookup",
+                "Content",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            memory.get_by_id_or_prefix(&id).await.unwrap().unwrap().id,
+            id
+        );
+        assert_eq!(
+            memory
+                .get_by_id_or_prefix(&id[..8])
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            id
+        );
+        assert!(
+            memory
+                .get_by_id_or_prefix("no-such")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_consolidate_supersedes_older_embedding_duplicates() {
+        let temp_dir = create_temp_dir();
+        let path = PathBuf::from(temp_dir.path());
+        let import_path = path.join("consolidate-fixture.json");
+        let export_path = path.join("consolidate-result.json");
+
+        let older_id = "11111111-1111-4111-8111-111111111111";
+        let newer_id = "22222222-2222-4222-8222-222222222222";
+        let distinct_id = "33333333-3333-4333-8333-333333333333";
+        let entries = serde_json::json!([
+            {
+                "id": older_id,
+                "agent_name": "test-agent",
+                "entry_type": "discovery",
+                "summary": "Orion cache policy old",
+                "content": "Orion cache uses strict LRU eviction policy",
+                "embedding": [1.0, 0.0],
+                "timestamp": 1000,
+                "checksum": 0,
+                "prev_checksum": 0
+            },
+            {
+                "id": newer_id,
+                "agent_name": "test-agent",
+                "entry_type": "decision",
+                "summary": "Orion cache policy current",
+                "content": "Orion cache uses strict LRU eviction policy",
+                "embedding": [1.0, 0.0],
+                "timestamp": 2000,
+                "checksum": 0,
+                "prev_checksum": 0
+            },
+            {
+                "id": distinct_id,
+                "agent_name": "test-agent",
+                "entry_type": "warning",
+                "summary": "Credential storage",
+                "content": "Credentials remain only in environment files",
+                "embedding": [0.0, 1.0],
+                "timestamp": 1500,
+                "checksum": 0,
+                "prev_checksum": 0
+            }
+        ]);
+        std::fs::write(&import_path, serde_json::to_vec_pretty(&entries).unwrap()).unwrap();
+
+        let memory = Mnemoria::create(&path).await.unwrap();
+        assert_eq!(memory.import(&import_path).await.unwrap(), 3);
+
+        let report = memory.consolidate(0.99, 2).await.unwrap();
+        assert_eq!(report.entries_before, 3);
+        assert_eq!(report.clusters_merged, 1);
+        assert_eq!(report.superseded, 1);
+        assert!(memory.verify().await.unwrap());
+
+        memory.export(&export_path).await.unwrap();
+        let exported: Vec<MemoryEntry> =
+            serde_json::from_slice(&std::fs::read(&export_path).unwrap()).unwrap();
+        assert_eq!(exported.len(), 4);
+        assert!(exported.iter().any(|entry| {
+            entry
+                .summary
+                .starts_with(&format!("SUPERSEDES {older_id} —"))
+        }));
+        assert!(!exported.iter().any(|entry| {
+            entry
+                .summary
+                .starts_with(&format!("SUPERSEDES {newer_id} —"))
+        }));
+
+        let results = memory
+            .search_memory("Orion cache eviction policy", 10, None)
+            .await
+            .unwrap();
+        assert!(results.iter().any(|result| result.id == newer_id));
+        assert!(!results.iter().any(|result| result.id == older_id));
+        assert!(memory.get(distinct_id).await.unwrap().is_some());
     }
 }

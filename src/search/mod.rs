@@ -267,7 +267,7 @@ impl IndexManager {
 ///
 /// simsimd returns cosine **distance** (1 - similarity), so we convert
 /// back to similarity. Returns `None` for mismatched/empty/zero-norm vectors.
-fn compute_cosine_similarity(a: &[f32], b: &[f32]) -> Option<f32> {
+pub(crate) fn compute_cosine_similarity(a: &[f32], b: &[f32]) -> Option<f32> {
     if a.len() != b.len() || a.is_empty() {
         return None;
     }

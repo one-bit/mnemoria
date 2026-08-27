@@ -248,6 +248,65 @@ impl Default for TimelineOptions {
     }
 }
 
+/// Options for compacting the memory store.
+///
+/// Used with [`Mnemoria::compact_with_options`](crate::Mnemoria::compact_with_options).
+/// The default preserves existing behavior (checksum validation and chain
+/// relinking only).
+#[derive(Debug, Clone, Copy, SerdeSerialize, SerdeDeserialize, Default)]
+pub struct CompactOptions {
+    /// Physically remove entries hidden by `SUPERSEDES` tombstones, along
+    /// with the tombstones themselves. The checksum chain is relinked so the
+    /// store stays verifiable.
+    pub prune_superseded: bool,
+}
+
+/// Options for formatting an `ask_memory` answer.
+///
+/// Used with [`Mnemoria::ask_memory_with_options`](crate::Mnemoria::ask_memory_with_options).
+#[derive(Debug, Clone, Copy, SerdeSerialize, SerdeDeserialize)]
+pub struct AskOptions {
+    /// Maximum bytes of each entry's content to include in the formatted
+    /// answer (truncated on a UTF-8 char boundary). `0` means include the
+    /// full content.
+    pub content_chars: usize,
+}
+
+impl Default for AskOptions {
+    fn default() -> Self {
+        Self { content_chars: 200 }
+    }
+}
+
+/// Outcome of a compact operation.
+#[derive(Debug, Clone, Copy, SerdeSerialize, SerdeDeserialize)]
+pub struct CompactReport {
+    /// Number of entries in the store before compaction.
+    pub entries_before: u64,
+    /// Number of entries retained after compaction.
+    pub entries_after: u64,
+    /// Number of superseded entries and tombstones removed (non-zero only
+    /// when [`CompactOptions::prune_superseded`] was set).
+    pub pruned_superseded: u64,
+}
+
+/// Outcome of a consolidate operation.
+///
+/// `consolidate` detects semantically near-duplicate entries (via stored-
+/// embedding cosine similarity), keeps the newest entry per cluster, and
+/// writes `SUPERSEDES` tombstones for the older copies. The append-only
+/// log is preserved: run `compact --prune-superseded` afterwards to
+/// physically remove the superseded entries and tombstones.
+#[derive(Debug, Clone, Copy, SerdeSerialize, SerdeDeserialize)]
+pub struct ConsolidateReport {
+    /// Number of entries in the store before consolidation.
+    pub entries_before: u64,
+    /// Number of duplicate clusters detected and consolidated.
+    pub clusters_merged: u64,
+    /// Number of superseded tombstones written.
+    pub superseded: u64,
+}
+
 /// Controls how aggressively writes are flushed to durable storage.
 ///
 /// Higher durability means lower risk of data loss on crash but reduced
@@ -273,7 +332,7 @@ pub enum DurabilityMode {
 ///
 /// Controls durability, entry rotation, and the embedding model. The
 /// default configuration uses [`DurabilityMode::Fsync`], no entry limit,
-/// and the `"minishlab/potion-base-32M"` embedding model.
+/// and the `"sentence-transformers/static-retrieval-mrl-en-v1"` embedding model.
 #[derive(Debug, Clone, SerdeSerialize, SerdeDeserialize)]
 pub struct Config {
     /// Maximum number of entries to keep. When the store reaches this count,
@@ -283,7 +342,7 @@ pub struct Config {
     /// Controls write durability. See [`DurabilityMode`] for details.
     pub durability: DurabilityMode,
     /// HuggingFace model ID for the model2vec embedding model.
-    /// Defaults to `"minishlab/potion-base-32M"`. Any model2vec-compatible
+    /// Defaults to `"sentence-transformers/static-retrieval-mrl-en-v1"`. Any model2vec-compatible
     /// model can be used (e.g. `"minishlab/potion-base-8M"`,
     /// `"minishlab/potion-retrieval-32M"`).
     pub model_id: String,

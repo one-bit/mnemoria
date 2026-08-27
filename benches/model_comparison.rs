@@ -25,24 +25,38 @@
 
 use mnemoria::embeddings::EmbeddingBackend;
 use mnemoria::{Config, DurabilityMode, EntryType, Mnemoria};
-use std::io::Write;
+use sha2::{Digest, Sha256};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
-/// The top 5 publicly available model2vec models from the MTEB results table.
-/// Ordered by overall MTEB score (descending).
+/// Publicly available model2vec models from the MTEB results table, plus
+/// newer official and community candidates. Ordered by overall MTEB score
+/// (descending) for the core five; candidate rows follow.
 ///
-/// Note: `static-retrieval-mrl-en-v1` is excluded because it requires
-/// HuggingFace authentication. We use `potion-base-2M` instead to cover
-/// the full size range from 2M to 32M parameters.
+/// `static-retrieval-mrl-en-v1` was previously thought to require HuggingFace
+/// authentication; it is public. It ships in the sentence-transformers static
+/// layout (nested `0_StaticEmbedding/`), so its snapshot is converted to the
+/// flat Model2Vec layout (`embeddings` tensor + `config.json`) before the
+/// benchmark loads it.
 const MODELS: &[(&str, &str)] = &[
     ("potion-base-32M", "minishlab/potion-base-32M"),
     ("potion-base-8M", "minishlab/potion-base-8M"),
     ("potion-retrieval-32M", "minishlab/potion-retrieval-32M"),
     ("potion-base-4M", "minishlab/potion-base-4M"),
     ("potion-base-2M", "minishlab/potion-base-2M"),
+    // Newer candidate rows (v0.4.1 model sweep).
+    (
+        "potion-multilingual-128M",
+        "minishlab/potion-multilingual-128M",
+    ),
+    ("potion-code-16M-v2", "minishlab/potion-code-16M-v2"),
+    (
+        "static-retrieval-mrl-en-v1",
+        "sentence-transformers/static-retrieval-mrl-en-v1",
+    ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -574,13 +588,22 @@ fn download_model(model_id: &str) {
 
         let size = std::fs::metadata(&tmp_dest).map(|m| m.len()).unwrap_or(0);
 
-        // Compute SHA256 for the blob filename (matching HF cache convention)
-        let hash_output = std::process::Command::new("sha256sum")
-            .arg(tmp_dest.to_str().unwrap())
-            .output()
-            .expect("failed to run sha256sum");
-        let hash = String::from_utf8_lossy(&hash_output.stdout);
-        let hash = hash.split_whitespace().next().unwrap_or("unknown");
+        // Compute SHA256 in-process for portability (Windows does not ship
+        // the Unix sha256sum utility used by the original benchmark).
+        let mut file =
+            std::fs::File::open(&tmp_dest).expect("failed to open downloaded model file");
+        let mut hasher = Sha256::new();
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let read = file
+                .read(&mut buffer)
+                .expect("failed to hash downloaded model file");
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+        }
+        let hash = format!("{:x}", hasher.finalize());
 
         let blob_path = blobs_dir.join(hash);
         std::fs::rename(&tmp_dest, &blob_path).expect("failed to rename blob");
